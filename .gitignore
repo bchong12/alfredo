@@ -1,0 +1,10 @@
+node_modules
+dist
+.env.local
+.db-password
+recordings/*.wav
+recordings/*.m4a
+.DS_Store
+
+dist-server
+dist-app

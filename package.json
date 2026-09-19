@@ -1,0 +1,88 @@
+{
+  "name": "alfredo",
+  "version": "0.1.0",
+  "description": "Your company brain in a database you own: board, docs, canvas and meetings, with an MCP server for Claude.",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k -n app,server \"npm:dev:app\" \"npm:dev:server\"",
+    "dev:app": "vite --port 5210",
+    "dev:server": "CRM_PORT=29982 tsx watch --env-file=.env.local server/index.ts",
+    "serve": "tsx --env-file=.env.local server/index.ts",
+    "db:push": "node --env-file=.env.local scripts/db-push.mjs",
+    "build": "vite build",
+    "devices": "tsx -e \"import('./server/audio.ts').then(async m=>console.log(await m.listDevices()))\"",
+    "postinstall": "node scripts/fix-pty.mjs",
+    "desktop": "electron .",
+    "build:server": "esbuild server/index.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist-server/index.mjs --external:node-pty --external:@electric-sql/pglite --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\"",
+    "desktop:build": "npm run build:desktop-ui && npm run build:server && electron-builder --mac --dir",
+    "desktop:install": "npm run desktop:build && (osascript -e 'quit app \"Alfredo\"' >/dev/null 2>&1; sleep 2; rm -rf /Applications/Alfredo.app && cp -R dist-app/mac-arm64/Alfredo.app /Applications/ && open -a /Applications/Alfredo.app && echo installed)",
+    "build:desktop-ui": "vite build --mode desktop"
+  },
+  "dependencies": {
+    "@electric-sql/pglite": "^0.5.8",
+    "node-pty": "^1.1.0"
+  },
+  "devDependencies": {
+    "@fontsource-variable/geist": "^5.3.0",
+    "@fontsource-variable/geist-mono": "^5.3.0",
+    "@hono/mcp": "^0.2.3",
+    "@hono/node-server": "^1.19.9",
+    "@lucide/svelte": "^1.37.0",
+    "@milkdown/crepe": "^7.22.1",
+    "@modelcontextprotocol/sdk": "^1.26.0",
+    "@supabase/supabase-js": "^2.48.0",
+    "@sveltejs/vite-plugin-svelte": "^5.0.0",
+    "@types/node": "^24.0.0",
+    "@types/pg": "^8.23.1",
+    "@xyflow/svelte": "^1.6.6",
+    "concurrently": "^9.1.0",
+    "electron": "^38.8.6",
+    "electron-builder": "^26.15.3",
+    "esbuild": "^0.28.2",
+    "hono": "^4.7.10",
+    "jsonrepair": "^3.15.0",
+    "marked": "^18.0.11",
+    "pg": "^8.23.0",
+    "svelte": "^5.20.0",
+    "svelte-dnd-action": "^0.9.79",
+    "tsx": "^4.19.0",
+    "typescript": "^5.8.0",
+    "vite": "^6.1.0",
+    "zod": "^4.3.6"
+  },
+  "main": "desktop/main.cjs",
+  "build": {
+    "appId": "app.alfredo.desktop",
+    "productName": "Alfredo",
+    "asar": false,
+    "directories": {
+      "output": "dist-app"
+    },
+    "files": [
+      "desktop/**/*",
+      "dist/**/*",
+      "dist-server/**/*",
+      "db/**/*",
+      "cloudflare/**/*",
+      "scripts/build-parakeet.sh",
+      "package.json",
+      "!desktop/icon/alfredo.iconset",
+      "!desktop/icon/icon.png"
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "icon": "desktop/icon/alfredo.icns",
+      "target": [
+        "dir"
+      ],
+      "identity": null,
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Alfredo records meetings and dictation on this Mac."
+      }
+    }
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  }
+}

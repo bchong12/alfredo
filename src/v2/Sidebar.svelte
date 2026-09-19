@@ -1,0 +1,191 @@
+<script lang="ts">
+  // The left rail: the company at the top, the tabs in the middle, you at the
+  // bottom. Everything else opens from one of those three.
+  import ChevronsUpDown from '@lucide/svelte/icons/chevrons-up-down'
+  import Search from '@lucide/svelte/icons/search'
+  import Columns3 from '@lucide/svelte/icons/columns-3'
+  import FileText from '@lucide/svelte/icons/file-text'
+  import Shapes from '@lucide/svelte/icons/shapes'
+  import Mic from '@lucide/svelte/icons/mic'
+  import Package from '@lucide/svelte/icons/package'
+  import WorkspaceMark from './WorkspaceMark.svelte'
+  import Face from './Face.svelte'
+  import ChevronRight from '@lucide/svelte/icons/chevron-right'
+  import { ui, visibleTabs, go, openPack, packView } from './state.svelte'
+  import { PACK_TABS } from './packs'
+  import { activeWorkspace } from '../lib/workspace.svelte'
+
+  let { onsearch }: { onsearch: () => void } = $props()
+
+  const ws = $derived(activeWorkspace())
+  let expanded = $state<Record<string, boolean>>({})
+  const ICONS: Record<string, any> = { board: Columns3, docs: FileText, canvas: Shapes, meetings: Mic }
+  const iconFor = (type: string) => ICONS[type] ?? PACK_TABS[type]?.icon ?? Package
+</script>
+
+<aside>
+  <button class="switcher" class:open={ui.overlay === 'workspaces'} onclick={() => (ui.overlay = ui.overlay === 'workspaces' ? null : 'workspaces')}>
+    <WorkspaceMark name={ui.settings?.name ?? ws?.name ?? ''} logo={ui.settings?.logo ?? null} size={28} />
+    <span class="wsname">{ui.settings?.name ?? ws?.name ?? 'Workspace'}</span>
+    <ChevronsUpDown size={14} />
+  </button>
+
+  <button class="search" onclick={onsearch}>
+    <Search size={13} />
+    <span>Search</span>
+    <kbd>⌘K</kbd>
+  </button>
+
+  <nav>
+    {#each visibleTabs() as t (t.id)}
+      {@const Icon = iconFor(t.type)}
+      {@const views = PACK_TABS[t.type]?.views ?? []}
+      {#if views.length > 1}
+        {@const open = ui.tab === t.id || expanded[t.id]}
+        <button class="tab" class:on={ui.tab === t.id && !open} onclick={() => (expanded = { ...expanded, [t.id]: !open })}>
+          <Icon size={14} />
+          <span>{t.name}</span>
+          <span class="chev" class:down={open}><ChevronRight size={12} /></span>
+        </button>
+        {#if open}
+          {#each views as v (v.id)}
+            <button class="tab sub" class:on={ui.tab === t.id && packView(t.type) === v.id} onclick={() => openPack(t.id, t.type, v.id)}>
+              <span>{v.label}</span>
+            </button>
+          {/each}
+        {/if}
+      {:else}
+        <button class="tab" class:on={ui.tab === t.id} onclick={() => go(t.id)}>
+          <Icon size={14} />
+          <span>{t.name}</span>
+        </button>
+      {/if}
+    {/each}
+  </nav>
+
+  <div class="spacer"></div>
+
+  <button class="account" class:open={ui.overlay === 'account'} onclick={() => (ui.overlay = ui.overlay === 'account' ? null : 'account')}>
+    <Face person={ui.me} size={24} />
+    <span class="wsname">{ui.me?.name ?? 'You'}</span>
+    <ChevronsUpDown size={14} />
+  </button>
+</aside>
+
+<style>
+  aside {
+    width: 232px;
+    flex-shrink: 0;
+    height: 100%;
+    background: var(--panel);
+    border-right: 1px solid var(--line);
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    padding: 10px;
+    box-sizing: border-box;
+  }
+  :global(html.desktop) aside {
+    padding-top: 40px;
+  }
+  button {
+    font: inherit;
+    color: inherit;
+    background: none;
+    border: 0;
+    cursor: pointer;
+    text-align: left;
+  }
+  .switcher,
+  .account {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    height: 44px;
+    padding: 0 8px;
+    border-radius: var(--r-lg);
+    color: var(--muted);
+  }
+  .switcher {
+    border: 1px solid var(--line);
+    background: var(--bg);
+  }
+  .switcher:hover,
+  .switcher.open,
+  .account:hover,
+  .account.open {
+    background: var(--raised);
+  }
+  .wsname {
+    flex: 1;
+    min-width: 0;
+    color: var(--ink);
+    font-size: var(--fs-3);
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .search {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 30px;
+    padding: 0 8px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    background: var(--bg);
+    color: var(--muted);
+    font-size: var(--fs-2);
+  }
+  .search span {
+    flex: 1;
+  }
+  kbd {
+    font-family: var(--mono);
+    font-size: 11px;
+  }
+  nav {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .tab {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    height: 28px;
+    padding: 0 8px;
+    border-radius: var(--r-md);
+    font-size: var(--fs-3);
+    color: var(--ink-2);
+  }
+  .tab:hover {
+    background: var(--accent-soft);
+  }
+  .tab.on {
+    background: var(--raised);
+    color: var(--ink);
+  }
+  .tab span:not(.chev) {
+    flex: 1;
+  }
+  .chev {
+    display: flex;
+    color: var(--muted);
+    transition: transform 0.15s;
+  }
+  .chev.down {
+    transform: rotate(90deg);
+  }
+  .sub {
+    padding-left: 32px;
+    font-size: var(--fs-2);
+  }
+  .spacer {
+    flex: 1;
+  }
+  .account {
+    height: 40px;
+  }
+</style>
