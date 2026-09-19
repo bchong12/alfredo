@@ -94,9 +94,23 @@
     if (!scope.canManage) return
     invites = await v2.get<Invite[]>('/invites').catch(() => [])
   }
+  /** A workspace on this Mac has no sign-in, so a person is simply added. */
+  const invitesAreLinks = $derived(ws?.kind !== 'local')
+
   async function makeInvite() {
     const email = inviteEmail.trim().toLowerCase()
     if (!email) return
+    if (!invitesAreLinks) {
+      try {
+        await v2.post('/members/invite', { email, role: inviteRole })
+        inviteEmail = ''
+        await refreshMembers()
+        flash('Added')
+      } catch (e) {
+        fail(e)
+      }
+      return
+    }
     try {
       const r = await v2.post<{ link: string | null; token: string }>('/invites', {
         email,
@@ -531,13 +545,19 @@
         {/if}
         {#if scope.canManage}
           <section>
-            <div class="lab"><b>Invite someone</b><span>They get a link, open Alfredo, paste it and sign in with this email. What they can reach is decided here, and kept in this workspace's database.</span></div>
+            <div class="lab">
+              <b>{invitesAreLinks ? 'Invite someone' : 'Add someone'}</b>
+              <span>
+                {#if invitesAreLinks}They get a link, open Alfredo, paste it and sign in with this email. What they can reach is decided here, and kept in this workspace's database.
+                {:else}A workspace on this Mac has no sign-in, so this just adds a name to assign work to.{/if}
+              </span>
+            </div>
             <div class="invite">
               <input class="field grow" placeholder="name@company.com" bind:value={inviteEmail} onkeydown={(e) => e.key === 'Enter' && makeInvite()} />
               <select class="field" bind:value={inviteRole}><option value="member">Member</option><option value="admin">Admin</option></select>
-              <button class="primary" onclick={makeInvite}>Make a link</button>
+              <button class="primary" onclick={makeInvite}>{invitesAreLinks ? 'Make a link' : 'Add'}</button>
             </div>
-            {#if scope.enabled && projects.length}
+            {#if invitesAreLinks && scope.enabled && projects.length}
               <div class="people">
                 {#each projects as p (p.id)}
                   <div class="who">
