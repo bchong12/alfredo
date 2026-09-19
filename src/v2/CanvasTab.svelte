@@ -2,8 +2,9 @@
   // Canvas: whiteboards. Frames that hug their content, outlined objects,
   // right-angle arrows, tools along the bottom. Same JSON as React Flow, so a
   // board made elsewhere in that format opens here unchanged.
+  import { scope } from './project.svelte'
+  import ProjectChip from './ProjectChip.svelte'
   import ProjectPicker from './ProjectPicker.svelte'
-  import ProjectTag from './ProjectTag.svelte'
   import { SvelteFlow, Background, BackgroundVariant, type Node, type Edge, type Connection } from '@xyflow/svelte'
   import '@xyflow/svelte/dist/style.css'
   import Plus from '@lucide/svelte/icons/plus'
@@ -450,7 +451,13 @@
             <div class="thumb">
               {#if c.thumb}<img src={`data:image/svg+xml;utf8,${encodeURIComponent(c.thumb)}`} alt="" loading="lazy" />{:else}<span class="blank">Empty canvas</span>{/if}
             </div>
-            <div class="info"><span class="t">{c.title}</span><span class="s"><ProjectTag project={c.project ?? null} />Edited {ago(c.updatedAt)}</span></div>
+            <div class="info">
+              <span class="t">{c.title}</span>
+              <span class="s">
+                <ProjectChip kind="canvas" id={c.id} project={c.project ?? null} onmoved={(p) => (list = list.map((x) => (x.id === c.id ? { ...x, project: p } : x)))} />
+                Edited {ago(c.updatedAt)}
+              </span>
+            </div>
           </button>
         {:else}
           {#if loadingList}
@@ -458,7 +465,10 @@
           {:else}
             <div class="empty">
               <Shapes size={20} />
-              <p>No canvases yet. Start one for a plan, a flow or a retro.</p>
+              <p>
+                {#if scope.enabled && scope.id}Nothing here yet. New canvases land in this project; to move an existing one, switch to All projects and use its project chip.
+                {:else}No canvases yet. Start one for a plan, a flow or a retro.{/if}
+              </p>
             </div>
           {/if}
         {/each}

@@ -4,7 +4,8 @@
   import ChevronsUpDown from '@lucide/svelte/icons/chevrons-up-down'
   import Check from '@lucide/svelte/icons/check'
   import Plus from '@lucide/svelte/icons/plus'
-  import { scope, activeProject, liveProjects } from './project.svelte'
+  import CircleDashed from '@lucide/svelte/icons/circle-dashed'
+  import { scope, activeProject, liveProjects, projectLabel, NO_PROJECT } from './project.svelte'
   import { setProject, openSettings } from './state.svelte'
 
   let open = $state(false)
@@ -14,7 +15,7 @@
 <div class="wrap">
   <button class="pbar" class:on={open} onclick={() => (open = !open)}>
     <i class="dot {current?.color ?? 'all'}"></i>
-    <span class="name">{current?.name ?? 'All projects'}</span>
+    <span class="name">{projectLabel()}</span>
     <ChevronsUpDown size={13} />
   </button>
 
@@ -34,6 +35,10 @@
         </button>
       {/each}
       <div class="line"></div>
+      <button class="row" onclick={() => ((open = false), setProject(NO_PROJECT))}>
+        <CircleDashed size={13} /><span class="grow">No project</span>
+        {#if scope.id === NO_PROJECT}<Check size={13} />{/if}
+      </button>
       <button class="row" onclick={() => ((open = false), openSettings('projects'))}><Plus size={13} /><span class="grow">New project</span></button>
     </div>
   {/if}

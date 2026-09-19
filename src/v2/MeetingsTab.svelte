@@ -1,8 +1,9 @@
 <script lang="ts">
   // Meetings: transcribed on this Mac by Parakeet. The audio is thrown away as
   // soon as the transcript exists; what stays is the transcript and the notes.
+  import { scope } from './project.svelte'
+  import ProjectChip from './ProjectChip.svelte'
   import ProjectPicker from './ProjectPicker.svelte'
-  import ProjectTag from './ProjectTag.svelte'
   import Cpu from '@lucide/svelte/icons/cpu'
   import Calendar from '@lucide/svelte/icons/calendar'
   import Trash2 from '@lucide/svelte/icons/trash-2'
@@ -280,14 +281,17 @@
             <button class="row" onclick={() => go(tabId, m.id)} onmouseenter={() => prefetch(`/meetings/${m.id}`)}>
               <div class="date"><span>{day(m.startedAt).toLocaleDateString(undefined, { weekday: 'short' })}</span><b>{day(m.startedAt).getDate()}</b></div>
               <div class="rt"><span class="h">{m.title}</span><span class="s">{m.hasTranscript ? 'Transcript and notes' : m.status === 'failed' ? 'Transcription failed' : 'Notes'} · {ago(m.startedAt)}</span></div>
-              <ProjectTag project={m.project ?? null} />
+              <ProjectChip kind="meeting" id={m.id} project={m.project ?? null} onmoved={(p) => (meetings = meetings.map((x) => (x.id === m.id ? { ...x, project: p } : x)))} />
               <span class="d">{dur(m.durationS)}</span>
             </button>
           {:else}
             {#if loading}
               {#each [0, 1, 2] as _}<div class="row sk"><Skeleton w={32} h={30} r={6} /><div class="rt"><Skeleton w="50%" h={12} /><Skeleton w="30%" h={10} /></div></div>{/each}
             {:else}
-              <p class="empty">No meetings yet.</p>
+              <p class="empty">
+                {#if scope.enabled && scope.id}Nothing here yet. Meetings you record in this project land here; to move an existing one, switch to All projects and use its project chip.
+                {:else}No meetings yet.{/if}
+              </p>
             {/if}
           {/each}
         </section>

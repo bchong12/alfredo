@@ -22,11 +22,14 @@ export const scope = $state({
   list: [] as Project[],
   /** Whether this person may add projects and decide who is in them. */
   canManage: false,
-  /** The open project, or null for all of them. */
+  /** A project id, 'none' for work in no project, or null for all of it. */
   id: null as string | null,
 })
 
+export const NO_PROJECT = 'none'
 export const activeProject = () => scope.list.find((p) => p.id === scope.id) ?? null
+/** What the switcher says right now. */
+export const projectLabel = () => (scope.id === NO_PROJECT ? 'No project' : (activeProject()?.name ?? 'All projects'))
 export const liveProjects = () => scope.list.filter((p) => !p.archived)
 
 const KEY = (ws: string) => `alfredo.v2.project.${ws}`
@@ -40,7 +43,8 @@ export function rememberProject(ws: string) {
 export function recallProject(ws: string) {
   try {
     const want = localStorage.getItem(KEY(ws))
-    scope.id = want && want !== 'all' && scope.list.some((p) => p.id === want && !p.archived) ? want : null
+    const known = want === NO_PROJECT || scope.list.some((p) => p.id === want && !p.archived)
+    scope.id = want && want !== 'all' && known ? want : null
   } catch {
     scope.id = null
   }

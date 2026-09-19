@@ -1,7 +1,7 @@
 <script lang="ts">
   // Docs: a home page of everything written, and each doc opening full width.
+  import ProjectChip from './ProjectChip.svelte'
   import ProjectPicker from './ProjectPicker.svelte'
-  import ProjectTag from './ProjectTag.svelte'
   import { scope } from './project.svelte'
   import Plus from '@lucide/svelte/icons/plus'
   import Search from '@lucide/svelte/icons/search'
@@ -208,14 +208,22 @@
             <button class="row" onclick={() => go(tabId, d.id)} onmouseenter={() => prefetch(`/docs/${d.id}`)}>
               <FileText size={14} />
               <span class="grow t">{d.title}</span>
-              <span class="w120 dim">{#if scope.enabled && !scope.id}<ProjectTag project={d.project ?? null} />{:else}{d.folder ?? ''}{/if}</span>
+              <span class="w120 dim">
+                {#if scope.enabled}
+                  <ProjectChip kind="doc" id={d.id} project={d.project ?? null} onmoved={(p) => (docs = docs.map((x) => (x.id === d.id ? { ...x, project: p } : x)))} />
+                {:else}{d.folder ?? ''}{/if}
+              </span>
               <span class="w110 r dim">{ago(d.updatedAt)}</span>
             </button>
           {:else}
             {#if loading}
               {#each [0, 1, 2, 3] as _}<div class="row sk"><Skeleton w={14} h={14} /><Skeleton w="45%" h={12} /></div>{/each}
             {:else}
-              <p class="empty">{query ? 'Nothing matches that search.' : 'No docs yet. Start one with New doc.'}</p>
+              <p class="empty">
+              {#if query}Nothing matches that search.
+              {:else if scope.enabled && scope.id}Nothing here yet. New docs land in this project; to move an existing one, switch to All projects and use its project chip.
+              {:else}No docs yet. Start one with New doc.{/if}
+            </p>
             {/if}
           {/each}
         </div>

@@ -103,6 +103,8 @@ export type Viewer = { id: string | null; admin: boolean }
 export const canOpenProject = (p: Project, me: Viewer) =>
   me.admin || (p.access ?? 'everyone') === 'everyone' || (me.id ? (p.members ?? []).includes(me.id) : false)
 export const ITEM_KINDS: ItemKind[] = ['card', 'doc', 'canvas', 'meeting']
+/** Asking for the work that belongs to no project at all. */
+export const NO_PROJECT = 'none'
 export const PROJECT_COLORS = ['slate', 'blue', 'green', 'amber', 'rose', 'violet', 'teal', 'orange']
 
 export const DEFAULT_TABS: TabDef[] = [
@@ -121,7 +123,8 @@ export interface Store {
   setRole(id: string, role: string): Promise<void>
   setAvatar(id: string, dataUrl: string): Promise<void>
   /** Card counts per week (by Monday), the backlog, and where the board's weeks begin. */
-  tally(only?: Set<string> | null): Promise<{ weeks: Map<string, { total: number; done: number }>; backlog: number; anchor: string | null; numbers: Map<string, number> }>
+  /** Counts for the board. `only` keeps the cards it says yes to. */
+  tally(only?: ((id: string) => boolean) | null): Promise<{ weeks: Map<string, { total: number; done: number }>; backlog: number; anchor: string | null; numbers: Map<string, number> }>
   /** Cards in any of these weeks, or in the backlog. */
   cardsIn(weeks: string[] | 'backlog'): Promise<Card[]>
   /** Move cards to a week (its Monday) or to the backlog (null). */
@@ -361,13 +364,13 @@ class SqlStore implements Store {
     if (!hit) throw new Error(`No week starting ${monday} on this board.`)
     return hit
   }
-  async tally(only: Set<string> | null = null) {
+  async tally(only: ((id: string) => boolean) | null = null) {
     const [rows, all, cols] = await Promise.all([
       listWeeks(),
       q<{ id: string; week_id: string | null; column_id: string }[]>(db.from('cards').select('id, week_id, column_id').is('archived_at', null)),
       this.columns(),
     ])
-    const cards = only ? all.filter((c) => only.has(c.id)) : all
+    const cards = only ? all.filter((c) => only(c.id)) : all
     const doneCols = new Set(cols.filter((c) => this.statusOf(c.name) === 'done').map((c) => c.id))
     const monday = new Map(rows.map((w) => [w.id, mondayOf(w.starts_on)]))
     const weeks = new Map<string, { total: number; done: number }>()
@@ -667,9 +670,9 @@ class CloudflareStore implements Store {
       ...({ revision: t.revision } as any),
     }
   }
-  async tally(only: Set<string> | null = null) {
+  async tally(only: ((id: string) => boolean) | null = null) {
     const [tasks, st] = await Promise.all([this.api.call<any[]>('/tasks'), this.raw()])
-    const rows = only ? tasks.filter((t) => only.has(t.id)) : tasks
+    const rows = only ? tasks.filter((t) => only(t.id)) : tasks
     const map = st.taskWeeks ?? {}
     const weeks = new Map<string, { total: number; done: number }>()
     let backlog = 0
@@ -1018,7 +1021,10 @@ export function v2Routes(current: () => { workspace: Workspace; db: unknown } | 
   }
 
   // --- projects -------------------------------------------------------------
-  /** The project a request is scoped to (x-project header), or null for all. */
+  /**
+   * The project a request is scoped to (x-project header): a project id,
+   * NONE for the work that is in no project, or null for all of it.
+   */
   const projectOf = (c: any): string | null => {
     const p = c.req.header('x-project') ?? c.req.query('project') ?? ''
     return p && p !== 'all' ? p : null
@@ -1034,6 +1040,7 @@ export function v2Routes(current: () => { workspace: Workspace; db: unknown } | 
     return list
       .filter((x) => {
         const inP = map[`${kind}:${x.id}`]
+        if (p === NO_PROJECT) return !inP
         return p ? inP === p : !inP || ok.has(inP)
       })
       .map((x) => ({ ...x, project: map[`${kind}:${x.id}`] ?? null }))
@@ -1045,18 +1052,23 @@ export function v2Routes(current: () => { workspace: Workspace; db: unknown } | 
   /** Something just made lands in the project the request is scoped to. */
   async function placed<T extends { id: string }>(c: any, kind: ItemKind, item: T): Promise<T & { project: string | null }> {
     const p = projectOf(c)
-    if (p) await store().assign(kind, [item.id], p)
+    if (!p || p === NO_PROJECT) return { ...item, project: null }
+    await store().assign(kind, [item.id], p)
     return { ...item, project: p }
   }
   /** Refuses a request scoped to a project this person cannot open. */
   async function guard(c: any) {
     const p = projectOf(c)
-    if (!p) return null
+    if (!p || p === NO_PROJECT) return null
     const { allowed } = await mine(c)
     return allowed.some((x) => x.id === p) ? null : c.json({ error: 'You do not have access to that project.' }, 403)
   }
-  const cardsOfProject = async (st: Store, p: string) =>
-    new Set(Object.entries(await mapOf(st)).filter(([k, v]) => v === p && k.startsWith('card:')).map(([k]) => k.slice(5)))
+  /** Which cards count for a project (or for the work in no project). */
+  async function cardFilter(st: Store, p: string) {
+    const map = await mapOf(st)
+    if (p === NO_PROJECT) return (id: string) => !map[`card:${id}`]
+    return (id: string) => map[`card:${id}`] === p
+  }
 
   // Who someone is, per workspace, for a few seconds: every list asks, and it
   // is two round trips to a database that does not change that fast.
@@ -1162,7 +1174,7 @@ export function v2Routes(current: () => { workspace: Workspace; db: unknown } | 
     }
 
     // Rollover is for the whole workspace; the counts shown are the project's.
-    const counts = project ? await st.tally(await cardsOfProject(st, project)) : t
+    const counts = project ? await st.tally(await cardFilter(st, project)) : t
     const starts = new Set<string>()
     for (const [w, n] of counts.weeks) if (n.total) starts.add(m.startOf(w))
     starts.add(current)
