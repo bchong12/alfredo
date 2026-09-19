@@ -25,6 +25,10 @@ Nothing is hosted by us. Keys and tokens live in the macOS keychain.
   written by Claude Code. Only the transcript is kept; the audio is deleted.
 - **Tabs you choose**: every workspace has a tabs JSON in its own database.
   Rename, hide or add tabs; teams can add their own tab types as packs.
+- **Projects** (optional): split one workspace into separate boards, docs,
+  canvases and meetings, in the same database. Switch under the workspace
+  name; "All projects" shows everything you can see. An admin decides whether
+  a project is open to everyone in the workspace or to people they pick.
 
 ## Run it
 
@@ -70,6 +74,7 @@ the active one. Tools:
 | `ws_list`, `ws_read`, `ws_write` | Cards, docs, canvases, meetings, members |
 | `get_workspace`, `set_workspace_tabs` | The workspace's name and tabs JSON |
 | `list_pack_data`, `get_pack_data`, `set_pack_data` | Data for custom tab types |
+| `list_projects`, `create_project`, `move_to_project`, `set_projects_enabled` | Split a workspace into projects and say who is in them |
 | `list_supabase_projects`, `connect_supabase` | Add a Supabase workspace |
 | `get_setup_sql`, `setup_supabase_tables` | Create or upgrade its tables |
 | `connect_cloudflare`, `create_cloudflare_workspace`, `get_cloudflare_deploy` | Add a Cloudflare workspace |
@@ -85,6 +90,14 @@ and Claude does the rest.
 - Cloudflare: `cloudflare/worker.mjs` and `cloudflare/schema.sql`. The Worker
   is the only door to D1 and checks a random token kept in your keychain.
 - This Mac: the same schema in PGlite (Postgres in WebAssembly).
+
+### Projects
+
+Off until a workspace turns them on. The project list lives in that
+workspace's settings and a `project_items` mapping says which project each
+card, doc, canvas or meeting is in, so nothing about the items changes and
+Supabase, a local folder and Cloudflare all behave the same. Work in no
+project stays visible to everyone.
 
 ### Tabs JSON
 

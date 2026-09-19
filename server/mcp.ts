@@ -4,7 +4,8 @@
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
-import { storeFor, mondayOf, tabsProblem, PACK_KEY, STATUSES as V2_STATUSES } from './v2'
+import { storeFor, mondayOf, tabsProblem, PACK_KEY, PROJECT_COLORS, STATUSES as V2_STATUSES } from './v2'
+import { randomUUID } from 'node:crypto'
 import * as wsReg from './workspaces'
 import * as connect from './connect'
 import * as cfDeploy from './cloudflare-deploy'
@@ -32,6 +33,8 @@ connection was opened with; list_workspaces shows them all.
 
 - Read and write: ws_list, ws_read, ws_write (cards, docs, canvases, meetings, members).
 - Shape the workspace: get_workspace, set_workspace_tabs (the tabs JSON), pack data tools.
+- Projects (optional, per workspace): list_projects, create_project, move_to_project,
+  set_projects_enabled. ws_list and ws_write take a project by name.
 - Connect databases: connect_supabase (an access token is easiest), connect_cloudflare,
   create_cloudflare_workspace (uses the user's wrangler login).
 
@@ -118,14 +121,85 @@ connecting a database, and never repeat back tokens or keys.`,
     },
   )
 
+  const KIND_OF = { cards: 'card', docs: 'doc', canvases: 'canvas', meetings: 'meeting' } as const
+  /** Project ids by name or id, so Claude can say "Launch" instead of a uuid. */
+  const projectId = async (p?: string) => {
+    if (!p) return null
+    const list = await ws().projects()
+    const hit = list.find((x) => x.id === p || x.name.toLowerCase() === p.toLowerCase())
+    if (!hit) throw new Error(`No project "${p}". list_projects shows them.`)
+    return hit.id
+  }
+
   add(
     'ws_list',
-    'List cards, docs, canvases, meetings or members in this workspace.',
-    { kind: z.enum(['cards', 'docs', 'canvases', 'meetings', 'members']) },
-    async ({ kind }) => {
+    "List cards (this week's), docs, canvases, meetings or members in this workspace. With project (name or id), only that project's items; each item says which project it is in.",
+    { kind: z.enum(['cards', 'docs', 'canvases', 'meetings', 'members']), project: z.string().optional() },
+    async ({ kind, project }: { kind: 'cards' | 'docs' | 'canvases' | 'meetings' | 'members'; project?: string }) => {
       const s = ws()
-      const r = kind === 'cards' ? await s.cardsIn([mondayOf()]) : kind === 'docs' ? await s.docs() : kind === 'canvases' ? await s.canvases() : kind === 'meetings' ? await s.meetings() : await s.members()
-      return ok(r)
+      if (kind === 'members') return ok(await s.members())
+      const r: any[] = kind === 'cards' ? await s.cardsIn([mondayOf()]) : kind === 'docs' ? await s.docs() : kind === 'canvases' ? await s.canvases() : await s.meetings()
+      const pid = await projectId(project)
+      const map = await s.projectMap().catch(() => ({}) as Record<string, string>)
+      const k = KIND_OF[kind]
+      return ok(r.filter((x) => !pid || map[`${k}:${x.id}`] === pid).map((x) => ({ ...x, project: map[`${k}:${x.id}`] ?? null })))
+    },
+  )
+
+  add(
+    'list_projects',
+    'The projects this workspace is split into (when projects are on): id, name, colour, and who can open each one.',
+    {},
+    async () => {
+      const s = ws()
+      const [set, list] = await Promise.all([s.settings(), s.projects()])
+      return ok({ enabled: !!set.projects?.enabled, projects: list })
+    },
+  )
+
+  add(
+    'create_project',
+    'Add a project to this workspace and turn projects on if they were off. Colours: slate, blue, green, amber, rose, violet, teal, orange. By default everyone in the workspace can open it; pass people (names or emails) to limit it to them, admins aside.',
+    { name: z.string().min(1), color: z.string().optional(), people: z.array(z.string()).optional() },
+    async ({ name, color, people }) => {
+      const s = ws()
+      const list = await s.projects()
+      let members: string[] = []
+      if (people?.length) {
+        const rows = await s.members()
+        members = people.map((x: string) => {
+          const hit = rows.find((m) => m.id === x || m.name.toLowerCase() === x.toLowerCase() || m.email?.toLowerCase() === x.toLowerCase())
+          if (!hit) throw new Error(`Nobody here called "${x}". ws_list members shows them.`)
+          return hit.id
+        })
+      }
+      const p = {
+        id: randomUUID(),
+        name: name.trim().slice(0, 60),
+        color: PROJECT_COLORS.includes(color ?? '') ? color! : 'slate',
+        access: members.length ? ('members' as const) : ('everyone' as const),
+        members,
+      }
+      await s.saveProjects([...list, p])
+      await s.saveSettings({ projects: { enabled: true } })
+      return ok(p)
+    },
+  )
+
+  add(
+    'set_projects_enabled',
+    'Turn projects on or off for this workspace. Off keeps every project and assignment; the app just shows everything together.',
+    { enabled: z.boolean() },
+    async ({ enabled }) => ok(await ws().saveSettings({ projects: { enabled } })),
+  )
+
+  add(
+    'move_to_project',
+    'Put cards, docs, canvases or meetings into a project (name or id), or pass project null to take them out of any.',
+    { kind: z.enum(['card', 'doc', 'canvas', 'meeting']), ids: z.array(z.string()).min(1), project: z.string().nullable() },
+    async ({ kind, ids, project }) => {
+      await ws().assign(kind, ids, await projectId(project ?? undefined))
+      return ok({ ok: true, moved: ids.length })
     },
   )
 
@@ -145,20 +219,27 @@ connecting a database, and never repeat back tokens or keys.`,
     {
       kind: z.enum(['card', 'doc']),
       id: z.string().optional(),
+      project: z.string().optional().describe('For new items: the project (name or id) to put it in.'),
       title: z.string().optional(),
       body: z.string().optional(),
       status: z.enum(V2_STATUSES as [string, ...string[]]).optional(),
     },
-    async ({ kind, id, title, body, status }) => {
+    async ({ kind, id, title, body, status, project }) => {
       const s = ws()
+      const pid = id ? null : await projectId(project)
       if (kind === 'card') {
         if (!id) {
           const c = await s.createCard({ title: title ?? 'Untitled', status: status as any })
+          if (pid) await s.assign('card', [c.id], pid)
           return ok(body ? await s.updateCard(c.id, { body }) : c)
         }
         return ok(await s.updateCard(id, { title, body, status: status as any }))
       }
-      if (!id) return ok(await s.createDoc(title ?? 'Untitled', body ?? ''))
+      if (!id) {
+        const d = await s.createDoc(title ?? 'Untitled', body ?? '')
+        if (pid) await s.assign('doc', [d.id], pid)
+        return ok(d)
+      }
       const cur = await s.doc(id)
       return ok(await s.saveDoc(id, { title: title ?? cur.title, body: body ?? cur.body, revision: cur.revision }))
     },

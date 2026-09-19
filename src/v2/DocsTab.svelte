@@ -1,5 +1,8 @@
 <script lang="ts">
   // Docs: a home page of everything written, and each doc opening full width.
+  import ProjectPicker from './ProjectPicker.svelte'
+  import ProjectTag from './ProjectTag.svelte'
+  import { scope } from './project.svelte'
   import Plus from '@lucide/svelte/icons/plus'
   import Search from '@lucide/svelte/icons/search'
   import FileText from '@lucide/svelte/icons/file-text'
@@ -147,6 +150,7 @@
       <article>
         {#if doc}
           <input class="dtitle" value={doc.title} placeholder="Untitled" oninput={(e) => queue({ title: e.currentTarget.value })} />
+          <ProjectPicker kind="doc" id={doc.id} project={doc.project ?? null} onchange={(p) => (doc && (doc.project = p), (docs = docs.map((x) => (x.id === doc?.id ? { ...x, project: p } : x))))} />
           {#key doc.id}
             <DocEditor value={doc.body} onchange={(md) => queue({ body: md })} />
           {/key}
@@ -199,12 +203,12 @@
         {/if}
 
         <div class="list">
-          <div class="lh"><span class="grow">All docs</span><span class="w120">Folder</span><span class="w110 r">Edited</span></div>
+          <div class="lh"><span class="grow">All docs</span><span class="w120">{scope.enabled && !scope.id ? 'Project' : 'Folder'}</span><span class="w110 r">Edited</span></div>
           {#each shown as d (d.id)}
             <button class="row" onclick={() => go(tabId, d.id)} onmouseenter={() => prefetch(`/docs/${d.id}`)}>
               <FileText size={14} />
               <span class="grow t">{d.title}</span>
-              <span class="w120 dim">{d.folder ?? ''}</span>
+              <span class="w120 dim">{#if scope.enabled && !scope.id}<ProjectTag project={d.project ?? null} />{:else}{d.folder ?? ''}{/if}</span>
               <span class="w110 r dim">{ago(d.updatedAt)}</span>
             </button>
           {:else}

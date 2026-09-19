@@ -4,10 +4,12 @@
 // first (optimistic) and roll back if the server says no.
 import { v2 } from './api'
 import { workspace } from '../lib/workspace.svelte'
+import { scope } from './project.svelte'
 
 const store = new Map<string, unknown>()
 const inflight = new Map<string, Promise<unknown>>()
-const key = (path: string) => `${workspace.activeId}|${path}`
+// Lists differ per project, so the open project is part of the key.
+const key = (path: string) => `${workspace.activeId}|${scope.enabled ? (scope.id ?? 'all') : ''}|${path}`
 
 export function peek<T>(path: string): T | undefined {
   return store.get(key(path)) as T | undefined

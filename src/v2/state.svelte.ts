@@ -1,9 +1,11 @@
 // Where the v2 UI is: which tab, which item inside it, which overlay.
 import { v2, type Person, type Settings, type TabDef } from './api'
+import { scope, rememberProject, recallProject, type Project } from './project.svelte'
 import { PACK_TABS } from './packs'
+import { workspace } from '../lib/workspace.svelte'
 
 export type Overlay = null | 'workspaces' | 'account' | 'settings'
-export type SettingsPage = 'general' | 'cycles' | 'tabs' | 'members' | 'database' | 'connections' | 'models' | 'appearance'
+export type SettingsPage = 'general' | 'projects' | 'cycles' | 'tabs' | 'members' | 'database' | 'connections' | 'models' | 'appearance'
 
 export const ui = $state({
   tab: 'board' as string,
@@ -52,6 +54,30 @@ export function go(tab: string, item: string | null = null) {
   } catch {}
 }
 
+/** Open one project, or all of them (null). Everything on screen follows. */
+export function setProject(id: string | null) {
+  scope.id = id
+  rememberProject(workspace.activeId)
+  ui.item = null
+  ui.overlay = null
+}
+
+/** The workspace's projects, and which one was last open here. */
+export async function loadProjects() {
+  const w = workspace.activeId
+  try {
+    const r = await v2.get<{ enabled: boolean; projects: Project[]; canManage?: boolean }>('/projects')
+    scope.enabled = r.enabled
+    scope.list = r.projects ?? []
+    scope.canManage = !!r.canManage
+  } catch {
+    scope.enabled = false
+    scope.list = []
+    scope.canManage = false
+  }
+  recallProject(w)
+}
+
 export function openSettings(page: SettingsPage = 'general') {
   ui.settingsPage = page
   ui.overlay = 'settings'
@@ -61,7 +87,11 @@ export async function loadWorkspaceState(meEmail: string | null) {
   ui.error = ''
   ui.settings = null
   ui.members = []
+  scope.enabled = false
+  scope.list = []
+  scope.id = null
   try {
+    await loadProjects()
     const [s, m] = await Promise.all([v2.get<Settings>('/settings'), v2.get<Person[]>('/members')])
     ui.settings = s
     ui.members = m

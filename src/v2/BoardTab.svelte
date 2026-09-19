@@ -2,6 +2,7 @@
   // Board: one cycle at a time (a week, unless the workspace says otherwise).
   // Everything is instant: cycles draw from cache and the neighbours are
   // prefetched; edits show before the server answers and undo if it refuses.
+  import ProjectTag from './ProjectTag.svelte'
   import { dndzone, type DndEvent } from 'svelte-dnd-action'
   import { fly } from 'svelte/transition'
   import Plus from '@lucide/svelte/icons/plus'
@@ -335,6 +336,7 @@
                 <div class="card" class:done={c.status === 'done'} class:pending={c.id.startsWith('tmp-')} role="button" tabindex="0" onclick={() => (open = c)} onkeydown={(e) => e.key === 'Enter' && (open = c)}>
                   <div class="top">
                     <span class="ref">{c.ref}</span>
+                    <ProjectTag project={c.project ?? null} />
                     <CopyNode text={() => markdown(c)} />
                   </div>
                   <span class="title">{c.title}</span>

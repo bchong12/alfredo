@@ -1,6 +1,7 @@
 <script lang="ts">
   // A card, opened. Closing applies the changes at once; the board sends them
   // and puts things back only if the server refuses.
+  import ProjectPicker from './ProjectPicker.svelte'
   import X from '@lucide/svelte/icons/x'
   import Trash2 from '@lucide/svelte/icons/trash-2'
   import Face from './Face.svelte'
@@ -82,6 +83,7 @@
           {/each}
         </select>
       </label>
+      <ProjectPicker kind="card" id={card.id} project={card.project ?? null} label />
       {#if assigneeId}<Face person={ui.members.find((m) => m.id === assigneeId) ?? null} size={24} />{/if}
     </div>
     <textarea bind:value={body} placeholder="Details, links, acceptance criteria…" rows="10"></textarea>

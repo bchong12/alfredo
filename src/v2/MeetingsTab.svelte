@@ -1,6 +1,8 @@
 <script lang="ts">
   // Meetings: transcribed on this Mac by Parakeet. The audio is thrown away as
   // soon as the transcript exists; what stays is the transcript and the notes.
+  import ProjectPicker from './ProjectPicker.svelte'
+  import ProjectTag from './ProjectTag.svelte'
   import Cpu from '@lucide/svelte/icons/cpu'
   import Calendar from '@lucide/svelte/icons/calendar'
   import Trash2 from '@lucide/svelte/icons/trash-2'
@@ -176,6 +178,7 @@
       <article>
         <input class="mtitle" value={meeting.title} oninput={(e) => queue({ title: e.currentTarget.value })} />
         <div class="meta">
+          <ProjectPicker kind="meeting" id={meeting.id} project={meeting.project ?? null} onchange={(p) => (meeting && (meeting.project = p), (meetings = meetings.map((x) => (x.id === meeting?.id ? { ...x, project: p } : x))))} />
           <span>{when(meeting.startedAt)}</span>
           {#if meeting.durationS}<span>· {dur(meeting.durationS)}</span>{/if}
         </div>
@@ -277,6 +280,7 @@
             <button class="row" onclick={() => go(tabId, m.id)} onmouseenter={() => prefetch(`/meetings/${m.id}`)}>
               <div class="date"><span>{day(m.startedAt).toLocaleDateString(undefined, { weekday: 'short' })}</span><b>{day(m.startedAt).getDate()}</b></div>
               <div class="rt"><span class="h">{m.title}</span><span class="s">{m.hasTranscript ? 'Transcript and notes' : m.status === 'failed' ? 'Transcription failed' : 'Notes'} · {ago(m.startedAt)}</span></div>
+              <ProjectTag project={m.project ?? null} />
               <span class="d">{dur(m.durationS)}</span>
             </button>
           {:else}

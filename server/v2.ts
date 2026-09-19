@@ -77,7 +77,33 @@ export function tabsProblem(tabs: unknown): string | null {
 export const PACK_KEY = /^[a-z][a-z0-9-]*(\.[a-z0-9-]+)*$/
 export type Cycles = { length: 1 | 2 | 4; rollover: 'ask' | 'next' | 'backlog'; upcoming: number; since?: string }
 export const DEFAULT_CYCLES: Cycles = { length: 1, rollover: 'ask', upcoming: 1 }
-export type Settings = { name?: string; logo?: string | null; tabs: TabDef[]; cycles?: Cycles }
+export type Settings = { name?: string; logo?: string | null; tabs: TabDef[]; cycles?: Cycles; projects?: { enabled: boolean } }
+
+/**
+ * Projects split one workspace (and its one database) into separate boards,
+ * docs, canvases and meetings. Off by default. Which project an item belongs
+ * to is a mapping kept beside the items, so it works the same on every
+ * database and never changes the items themselves.
+ */
+export type Project = {
+  id: string
+  name: string
+  color: string
+  archived?: boolean
+  /** Who can open it: everyone in the workspace, or only the people listed. */
+  access?: 'everyone' | 'members'
+  /** People ids (see members()), when access is 'members'. Admins always get in. */
+  members?: string[]
+}
+export type ItemKind = 'card' | 'doc' | 'canvas' | 'meeting'
+/** Who is asking: their row in this workspace's people, and whether they run it. */
+export type Viewer = { id: string | null; admin: boolean }
+
+/** Whether someone may open a project. Admins always may; so does anyone listed. */
+export const canOpenProject = (p: Project, me: Viewer) =>
+  me.admin || (p.access ?? 'everyone') === 'everyone' || (me.id ? (p.members ?? []).includes(me.id) : false)
+export const ITEM_KINDS: ItemKind[] = ['card', 'doc', 'canvas', 'meeting']
+export const PROJECT_COLORS = ['slate', 'blue', 'green', 'amber', 'rose', 'violet', 'teal', 'orange']
 
 export const DEFAULT_TABS: TabDef[] = [
   { id: 'board', type: 'board', name: 'Board', columns: ['Todo', 'In progress', 'Review', 'Done'] },
@@ -95,7 +121,7 @@ export interface Store {
   setRole(id: string, role: string): Promise<void>
   setAvatar(id: string, dataUrl: string): Promise<void>
   /** Card counts per week (by Monday), the backlog, and where the board's weeks begin. */
-  tally(): Promise<{ weeks: Map<string, { total: number; done: number }>; backlog: number; anchor: string | null; numbers: Map<string, number> }>
+  tally(only?: Set<string> | null): Promise<{ weeks: Map<string, { total: number; done: number }>; backlog: number; anchor: string | null; numbers: Map<string, number> }>
   /** Cards in any of these weeks, or in the backlog. */
   cardsIn(weeks: string[] | 'backlog'): Promise<Card[]>
   /** Move cards to a week (its Monday) or to the backlog (null). */
@@ -120,6 +146,12 @@ export interface Store {
   pack(key: string): Promise<{ value: unknown; updatedAt: string } | null>
   setPack(key: string, value: unknown): Promise<void>
   packKeys(): Promise<{ key: string; updatedAt: string; bytes: number }[]>
+  projects(): Promise<Project[]>
+  saveProjects(list: Project[]): Promise<void>
+  /** "kind:id" -> project id, for every item that belongs to one. */
+  projectMap(): Promise<Record<string, string>>
+  /** Put items in a project, or take them out of any (null). */
+  assign(kind: ItemKind, ids: string[], project: string | null): Promise<void>
 }
 
 // --- canvas thumbnails: the board itself, drawn small --------------------------
@@ -235,10 +267,17 @@ class SqlStore implements Store {
   async settings(): Promise<Settings> {
     const rows = await q<{ key: string; value: any }[]>(db.from('workspace_settings').select('*'))
     const map = Object.fromEntries(rows.map((r) => [r.key, r.value]))
-    return { name: map.brand?.name ?? this.ws.name, logo: map.brand?.logo ?? null, tabs: map.tabs ?? DEFAULT_TABS, cycles: { ...DEFAULT_CYCLES, ...(map.cycles ?? {}) } }
+    return {
+      name: map.brand?.name ?? this.ws.name,
+      logo: map.brand?.logo ?? null,
+      tabs: map.tabs ?? DEFAULT_TABS,
+      cycles: { ...DEFAULT_CYCLES, ...(map.cycles ?? {}) },
+      projects: { enabled: !!map.project_settings?.enabled },
+    }
   }
   async saveSettings(s: Partial<Settings>) {
     const cur = await this.settings()
+    if (s.projects) await q(db.from('workspace_settings').upsert({ key: 'project_settings', value: { enabled: !!s.projects.enabled }, updated_at: new Date().toISOString() }))
     if (s.tabs) await q(db.from('workspace_settings').upsert({ key: 'tabs', value: s.tabs, updated_at: new Date().toISOString() }))
     if (s.cycles) await q(db.from('workspace_settings').upsert({ key: 'cycles', value: s.cycles, updated_at: new Date().toISOString() }))
     if (s.name !== undefined || s.logo !== undefined) {
@@ -322,12 +361,13 @@ class SqlStore implements Store {
     if (!hit) throw new Error(`No week starting ${monday} on this board.`)
     return hit
   }
-  async tally() {
-    const [rows, cards, cols] = await Promise.all([
+  async tally(only: Set<string> | null = null) {
+    const [rows, all, cols] = await Promise.all([
       listWeeks(),
-      q<{ week_id: string | null; column_id: string }[]>(db.from('cards').select('week_id, column_id').is('archived_at', null)),
+      q<{ id: string; week_id: string | null; column_id: string }[]>(db.from('cards').select('id, week_id, column_id').is('archived_at', null)),
       this.columns(),
     ])
+    const cards = only ? all.filter((c) => only.has(c.id)) : all
     const doneCols = new Set(cols.filter((c) => this.statusOf(c.name) === 'done').map((c) => c.id))
     const monday = new Map(rows.map((w) => [w.id, mondayOf(w.starts_on)]))
     const weeks = new Map<string, { total: number; done: number }>()
@@ -504,6 +544,23 @@ class SqlStore implements Store {
     const rows = await q<any[]>(db.from('pack_data').select('key, updated_at, value'))
     return rows.map((r) => ({ key: r.key, updatedAt: r.updated_at, bytes: JSON.stringify(r.value).length })).sort((a, b) => a.key.localeCompare(b.key))
   }
+
+  async projects(): Promise<Project[]> {
+    const rows = await q<any[]>(db.from('workspace_settings').select('value').eq('key', 'projects').limit(1))
+    return (rows[0]?.value as Project[]) ?? []
+  }
+  async saveProjects(list: Project[]) {
+    await q(db.from('workspace_settings').upsert({ key: 'projects', value: list, updated_at: new Date().toISOString() }))
+  }
+  async projectMap() {
+    const rows = await q<{ kind: string; item_id: string; project_id: string }[]>(db.from('project_items').select('kind, item_id, project_id'))
+    return Object.fromEntries(rows.map((r) => [`${r.kind}:${r.item_id}`, r.project_id]))
+  }
+  async assign(kind: ItemKind, ids: string[], project: string | null) {
+    if (!ids.length) return
+    await q(db.from('project_items').delete().eq('kind', kind).in('item_id', ids))
+    if (project) await q(db.from('project_items').insert(ids.map((id) => ({ kind, item_id: id, project_id: project }))))
+  }
 }
 
 // --- Cloudflare store ---------------------------------------------------------
@@ -548,7 +605,7 @@ class CloudflareStore implements Store {
 
   async settings(): Promise<Settings> {
     const s = await this.raw()
-    return { name: s.name ?? this.ws.name, logo: s.logo ?? null, tabs: s.tabs ?? DEFAULT_TABS, cycles: { ...DEFAULT_CYCLES, ...(s.cycles ?? {}) } }
+    return { name: s.name ?? this.ws.name, logo: s.logo ?? null, tabs: s.tabs ?? DEFAULT_TABS, cycles: { ...DEFAULT_CYCLES, ...(s.cycles ?? {}) }, projects: { enabled: !!s.projectSettings?.enabled } }
   }
   async saveSettings(patch: Partial<Settings>) {
     const cur = await this.raw()
@@ -557,6 +614,7 @@ class CloudflareStore implements Store {
     if (patch.logo !== undefined) next.logo = patch.logo
     if (patch.tabs !== undefined) next.tabs = patch.tabs
     if (patch.cycles !== undefined) next.cycles = patch.cycles
+    if (patch.projects !== undefined) next.projectSettings = { enabled: !!patch.projects.enabled }
     await this.writeRaw(next)
     return this.settings()
   }
@@ -609,8 +667,9 @@ class CloudflareStore implements Store {
       ...({ revision: t.revision } as any),
     }
   }
-  async tally() {
-    const [rows, st] = await Promise.all([this.api.call<any[]>('/tasks'), this.raw()])
+  async tally(only: Set<string> | null = null) {
+    const [tasks, st] = await Promise.all([this.api.call<any[]>('/tasks'), this.raw()])
+    const rows = only ? tasks.filter((t) => only.has(t.id)) : tasks
     const map = st.taskWeeks ?? {}
     const weeks = new Map<string, { total: number; done: number }>()
     let backlog = 0
@@ -798,6 +857,28 @@ class CloudflareStore implements Store {
     const items = (await this.items()).filter((i) => i.type === 'document' && i.title?.startsWith(PACK_PREFIX))
     return items.map((i) => ({ key: i.title.slice(PACK_PREFIX.length), updatedAt: i.updatedAt ?? i.updated_at ?? '', bytes: 0 }))
   }
+
+  // Projects ride in the same hidden settings document as the cycle weeks.
+  async projects(): Promise<Project[]> {
+    return (await this.raw()).projects ?? []
+  }
+  async saveProjects(list: Project[]) {
+    const cur = await this.raw()
+    await this.writeRaw({ ...cur, projects: list })
+  }
+  async projectMap() {
+    return ((await this.raw()).projectItems ?? {}) as Record<string, string>
+  }
+  async assign(kind: ItemKind, ids: string[], project: string | null) {
+    if (!ids.length) return
+    const cur = await this.raw()
+    const map = { ...(cur.projectItems ?? {}) }
+    for (const id of ids) {
+      if (project) map[`${kind}:${id}`] = project
+      else delete map[`${kind}:${id}`]
+    }
+    await this.writeRaw({ ...cur, projectItems: map })
+  }
 }
 
 /** The store behind a workspace: its folder, Supabase, or its Cloudflare Worker. */
@@ -812,7 +893,7 @@ export function storeFor(c: { workspace: Workspace; db: unknown } | undefined): 
 
 // --- transcription: transcript only, the audio never outlives it -------------
 
-type Job = { id: string; title: string; state: 'recording' | 'transcribing' | 'writing' | 'done' | 'failed'; meetingId?: string; error?: string; startedAt: number }
+type Job = { id: string; title: string; project?: string | null; state: 'recording' | 'transcribing' | 'writing' | 'done' | 'failed'; meetingId?: string; error?: string; startedAt: number }
 const jobs = new Map<string, Job>()
 let install: { state: 'idle' | 'running' | 'done' | 'failed'; log: string; startedAt?: number } = { state: 'idle', log: '' }
 
@@ -844,6 +925,7 @@ async function finish(job: Job, st: Store, path: string, durationS: number, star
       notes = `_The write-up could not be generated: ${(e as Error).message}_`
     }
     const m = await st.createMeeting({ title: title || 'Meeting', transcript: t.text, notes, startedAt: new Date(startedAt).toISOString(), durationS: Math.round(durationS) })
+    if (job.project) await st.assign('meeting', [m.id], job.project).catch(() => {})
     job.meetingId = m.id
     job.state = 'done'
   } catch (e) {
@@ -912,6 +994,7 @@ export function v2Routes(current: () => { workspace: Workspace; db: unknown } | 
     return c.json(await store().invite(b.email.trim().toLowerCase(), b.role === 'admin' ? 'admin' : 'member'))
   })
   app.patch('/members/:id', async (c) => {
+    whoCache.clear()
     const b = await c.req.json<{ role?: string; avatar?: string }>()
     if (b.role) await store().setRole(c.req.param('id'), b.role === 'admin' ? 'admin' : 'member')
     if (b.avatar) {
@@ -934,9 +1017,132 @@ export function v2Routes(current: () => { workspace: Workspace; db: unknown } | 
     return { startOf, weeksOf, index, next: (start: string) => addDays(start, 7 * len) }
   }
 
-  async function cycles(): Promise<CyclesView> {
+  // --- projects -------------------------------------------------------------
+  /** The project a request is scoped to (x-project header), or null for all. */
+  const projectOf = (c: any): string | null => {
+    const p = c.req.header('x-project') ?? c.req.query('project') ?? ''
+    return p && p !== 'all' ? p : null
+  }
+  /** The mapping, or none when this database has no projects table yet. */
+  const mapOf = (st: Store) => st.projectMap().catch(() => ({}) as Record<string, string>)
+  /** Keep what belongs to the project (all when unscoped) and say which project each item is in. */
+  async function scoped<T extends { id: string }>(c: any, kind: ItemKind, list: T[]): Promise<(T & { project: string | null })[]> {
+    const p = projectOf(c)
+    const [map, { allowed }] = await Promise.all([mapOf(store()), mine(c)])
+    // Across all projects you see your own and anything in no project at all.
+    const ok = new Set(allowed.map((x) => x.id))
+    return list
+      .filter((x) => {
+        const inP = map[`${kind}:${x.id}`]
+        return p ? inP === p : !inP || ok.has(inP)
+      })
+      .map((x) => ({ ...x, project: map[`${kind}:${x.id}`] ?? null }))
+  }
+  async function one<T extends { id: string }>(kind: ItemKind, item: T): Promise<T & { project: string | null }> {
+    const map = await mapOf(store())
+    return { ...item, project: map[`${kind}:${item.id}`] ?? null }
+  }
+  /** Something just made lands in the project the request is scoped to. */
+  async function placed<T extends { id: string }>(c: any, kind: ItemKind, item: T): Promise<T & { project: string | null }> {
+    const p = projectOf(c)
+    if (p) await store().assign(kind, [item.id], p)
+    return { ...item, project: p }
+  }
+  /** Refuses a request scoped to a project this person cannot open. */
+  async function guard(c: any) {
+    const p = projectOf(c)
+    if (!p) return null
+    const { allowed } = await mine(c)
+    return allowed.some((x) => x.id === p) ? null : c.json({ error: 'You do not have access to that project.' }, 403)
+  }
+  const cardsOfProject = async (st: Store, p: string) =>
+    new Set(Object.entries(await mapOf(st)).filter(([k, v]) => v === p && k.startsWith('card:')).map(([k]) => k.slice(5)))
+
+  // Who someone is, per workspace, for a few seconds: every list asks, and it
+  // is two round trips to a database that does not change that fast.
+  const whoCache = new Map<string, { at: number; value: Viewer }>()
+
+  /** Who is asking, as a row in this workspace's people, and whether they run it. */
+  async function who(c: any): Promise<Viewer> {
+    const person0 = c.get?.('person') as { email?: string } | undefined
+    const key = `${current()?.workspace.id ?? ''}|${person0?.email ?? ''}`
+    const hit = whoCache.get(key)
+    if (hit && Date.now() - hit.at < 15_000) return hit.value
+    const value = await whoUncached(c)
+    whoCache.set(key, { at: Date.now(), value })
+    return value
+  }
+  async function whoUncached(c: any): Promise<Viewer> {
+    const person = c.get?.('person') as { id: string; email: string } | undefined
+    const people = await store().members()
+    // A workspace with no admins yet (a fresh local folder) is run by whoever is at it.
+    const admins = people.filter((p) => p.role === 'admin')
+    const mine = person?.email ? people.find((p) => p.email?.toLowerCase() === person.email.toLowerCase()) : null
+    if (!mine) return { id: null, admin: !admins.length || !person?.email }
+    return { id: mine.id, admin: mine.role === 'admin' }
+  }
+  /** The projects this person may open. */
+  async function mine(c: any) {
+    const [list, me] = await Promise.all([store().projects(), who(c)])
+    return { me, all: list, allowed: list.filter((p) => canOpenProject(p, me)) }
+  }
+
+  app.get('/projects', async (c) => {
     const st = store()
-    const [settings, t] = await Promise.all([st.settings(), st.tally()])
+    const [set, { me, allowed }] = await Promise.all([st.settings(), mine(c)])
+    return c.json({ enabled: !!set.projects?.enabled, projects: allowed, canManage: me.admin })
+  })
+  app.put('/projects', async (c) => {
+    const st = store()
+    const { me } = await mine(c)
+    if (!me.admin) return c.json({ error: 'Only an admin can change the projects here.' }, 403)
+    const b = await c.req.json<{ enabled?: boolean; projects?: Partial<Project>[] }>()
+    if (b.projects) {
+      const before = await st.projects()
+      const next: Project[] = []
+      for (const x of b.projects) {
+        const name = (x.name ?? '').trim().slice(0, 60)
+        if (!name) return c.json({ error: 'Every project needs a name.' }, 400)
+        next.push({
+          id: x.id || randomUUID(),
+          name,
+          color: PROJECT_COLORS.includes(x.color ?? '') ? x.color! : 'slate',
+          access: x.access === 'members' ? 'members' : 'everyone',
+          members: x.access === 'members' ? (x.members ?? []).filter((m) => typeof m === 'string') : [],
+          ...(x.archived ? { archived: true } : {}),
+        })
+      }
+      // A deleted project lets go of its items; they stay, in no project.
+      const gone = new Set(before.filter((p) => !next.some((n) => n.id === p.id)).map((p) => p.id))
+      if (gone.size) {
+        const map = await mapOf(st)
+        for (const kind of ITEM_KINDS) {
+          const ids = Object.entries(map).filter(([k, v]) => k.startsWith(kind + ':') && gone.has(v)).map(([k]) => k.slice(kind.length + 1))
+          await st.assign(kind, ids, null)
+        }
+      }
+      await st.saveProjects(next)
+    }
+    if (b.enabled !== undefined) await st.saveSettings({ projects: { enabled: !!b.enabled } })
+    whoCache.clear()
+    const [set, after] = await Promise.all([st.settings(), mine(c)])
+    return c.json({ enabled: !!set.projects?.enabled, projects: after.allowed, canManage: after.me.admin })
+  })
+  app.post('/projects/assign', async (c) => {
+    const b = await c.req.json<{ kind: ItemKind; ids: string[]; project: string | null }>()
+    if (!ITEM_KINDS.includes(b.kind) || !Array.isArray(b.ids)) return c.json({ error: 'Say what to move: kind and ids.' }, 400)
+    const st = store()
+    const { allowed, all } = await mine(c)
+    if (b.project && !all.some((p) => p.id === b.project)) return c.json({ error: 'No such project.' }, 404)
+    if (b.project && !allowed.some((p) => p.id === b.project)) return c.json({ error: 'You do not have access to that project.' }, 403)
+    await st.assign(b.kind, b.ids, b.project ?? null)
+    return c.json({ ok: true })
+  })
+
+  async function cycles(project: string | null = null): Promise<CyclesView> {
+    const st = store()
+    const [settings, all] = await Promise.all([st.settings(), st.tally()])
+    const t = all
     const cfg = { ...DEFAULT_CYCLES, ...(settings.cycles ?? {}) }
     const today = mondayOf(localToday())
     const anchor = t.anchor && t.anchor <= today ? t.anchor : today
@@ -950,17 +1156,19 @@ export function v2Routes(current: () => { workspace: Workspace; db: unknown } | 
         const open = (await st.cardsIn(ended)).filter((c) => c.status !== 'done').map((c) => c.id)
         if (open.length) {
           await st.moveCards(open, cfg.rollover === 'next' ? current : null)
-          return cycles()
+          return cycles(project)
         }
       }
     }
 
+    // Rollover is for the whole workspace; the counts shown are the project's.
+    const counts = project ? await st.tally(await cardsOfProject(st, project)) : t
     const starts = new Set<string>()
-    for (const [w, n] of t.weeks) if (n.total) starts.add(m.startOf(w))
+    for (const [w, n] of counts.weeks) if (n.total) starts.add(m.startOf(w))
     starts.add(current)
     for (let i = 1, s = current; i <= cfg.upcoming; i++) starts.add((s = m.next(s)))
     const list = [...starts].sort().map((start) => {
-      const tally = m.weeksOf(start).reduce((a, w) => ({ total: a.total + (t.weeks.get(w)?.total ?? 0), done: a.done + (t.weeks.get(w)?.done ?? 0) }), { total: 0, done: 0 })
+      const tally = m.weeksOf(start).reduce((a, w) => ({ total: a.total + (counts.weeks.get(w)?.total ?? 0), done: a.done + (counts.weeks.get(w)?.done ?? 0) }), { total: 0, done: 0 })
       const num = cfg.length === 1 ? (t.numbers.get(start) ?? isoWeekOf(start)) : m.index(start)
       return {
         start,
@@ -971,10 +1179,10 @@ export function v2Routes(current: () => { workspace: Workspace; db: unknown } | 
         past: start < current,
       }
     })
-    return { current, cycles: list, backlog: t.backlog, settings: cfg, next: m.next(current) }
+    return { current, cycles: list, backlog: counts.backlog, settings: cfg, next: m.next(current) }
   }
 
-  app.get('/weeks', async (c) => c.json(await cycles()))
+  app.get('/weeks', async (c) => (await guard(c)) ?? c.json(await cycles(projectOf(c))))
   /** Finish a cycle: its unfinished cards go to the next cycle or the backlog. */
   app.post('/weeks/complete', async (c) => {
     const b = await c.req.json<{ start: string; to: 'next' | 'backlog' }>()
@@ -983,55 +1191,57 @@ export function v2Routes(current: () => { workspace: Workspace; db: unknown } | 
     const st = store()
     const view = await cycles()
     const m = cycleMath((await st.tally()).anchor ?? start, view.settings.length)
-    const open = (await st.cardsIn(m.weeksOf(start))).filter((x) => x.status !== 'done').map((x) => x.id)
+    const open = (await scoped(c, 'card', await st.cardsIn(m.weeksOf(start)))).filter((x) => x.status !== 'done').map((x) => x.id)
     await st.moveCards(open, b.to === 'backlog' ? null : m.next(start))
     return c.json({ moved: open.length })
   })
   app.get('/cards', async (c) => {
+    const denied = await guard(c)
+    if (denied) return denied
     const w = weekParam(c.req.query('week'))
-    if (w === 'backlog') return c.json(await store().cardsIn('backlog'))
+    if (w === 'backlog') return c.json(await scoped(c, 'card', await store().cardsIn('backlog')))
     const view = await cycles()
     const st = store()
     const start = w ?? view.current
     const m = cycleMath((await st.tally()).anchor ?? start, view.settings.length)
-    return c.json(await st.cardsIn(m.weeksOf(m.startOf(start))))
+    return c.json(await scoped(c, 'card', await st.cardsIn(m.weeksOf(m.startOf(start)))))
   })
   app.post('/cards', async (c) => {
     const b = await c.req.json<{ title: string; status?: Status; week?: string }>()
     if (!b.title?.trim()) return c.json({ error: 'Give the card a title.' }, 400)
-    return c.json(await store().createCard({ title: b.title.trim(), status: STATUSES.includes(b.status!) ? b.status : 'todo', week: weekParam(b.week) }))
+    return c.json(await placed(c, 'card', await store().createCard({ title: b.title.trim(), status: STATUSES.includes(b.status!) ? b.status : 'todo', week: weekParam(b.week) })))
   })
   app.patch('/cards/:id', async (c) => {
     const b = await c.req.json<Record<string, any>>()
     if (b.week !== undefined) b.week = weekParam(b.week) ?? 'backlog'
-    return c.json(await store().updateCard(c.req.param('id'), b))
+    return c.json(await one('card', await store().updateCard(c.req.param('id'), b)))
   })
   app.delete('/cards/:id', async (c) => {
     await store().deleteCard(c.req.param('id'))
     return c.json({ ok: true })
   })
 
-  app.get('/docs', async (c) => c.json(await store().docs()))
-  app.get('/docs/:id', async (c) => c.json(await store().doc(c.req.param('id'))))
+  app.get('/docs', async (c) => (await guard(c)) ?? c.json(await scoped(c, 'doc', await store().docs())))
+  app.get('/docs/:id', async (c) => c.json(await one('doc', await store().doc(c.req.param('id')))))
   app.post('/docs', async (c) => {
     const b = await c.req.json<{ title?: string; body?: string }>()
-    return c.json(await store().createDoc(b.title?.trim() || 'Untitled', b.body ?? ''))
+    return c.json(await placed(c, 'doc', await store().createDoc(b.title?.trim() || 'Untitled', b.body ?? '')))
   })
   app.put('/docs/:id', async (c) => c.json(await store().saveDoc(c.req.param('id'), await c.req.json())))
 
-  app.get('/canvases', async (c) => c.json(await store().canvases()))
-  app.get('/canvases/:id', async (c) => c.json(await store().canvas(c.req.param('id'))))
+  app.get('/canvases', async (c) => (await guard(c)) ?? c.json(await scoped(c, 'canvas', await store().canvases())))
+  app.get('/canvases/:id', async (c) => c.json(await one('canvas', await store().canvas(c.req.param('id')))))
   app.post('/canvases', async (c) => {
     const b = await c.req.json<{ title?: string }>()
-    return c.json(await store().createCanvas(b.title?.trim() || 'Untitled canvas'))
+    return c.json(await placed(c, 'canvas', await store().createCanvas(b.title?.trim() || 'Untitled canvas')))
   })
   app.put('/canvases/:id', async (c) => c.json(await store().saveCanvas(c.req.param('id'), await c.req.json())))
 
-  app.get('/meetings', async (c) => c.json(await store().meetings()))
-  app.get('/meetings/:id', async (c) => c.json(await store().meeting(c.req.param('id'))))
+  app.get('/meetings', async (c) => (await guard(c)) ?? c.json(await scoped(c, 'meeting', await store().meetings())))
+  app.get('/meetings/:id', async (c) => c.json(await one('meeting', await store().meeting(c.req.param('id')))))
   app.post('/meetings', async (c) => {
     const b = await c.req.json<{ title?: string; transcript?: string; notes?: string; startedAt?: string; durationS?: number }>()
-    return c.json(await store().createMeeting({ ...b, title: b.title?.trim() || 'Meeting' }))
+    return c.json(await placed(c, 'meeting', await store().createMeeting({ ...b, title: b.title?.trim() || 'Meeting' })))
   })
   app.put('/meetings/:id', async (c) => c.json(await store().saveMeeting(c.req.param('id'), await c.req.json())))
 
@@ -1066,7 +1276,7 @@ export function v2Routes(current: () => { workspace: Workspace; db: unknown } | 
     const b = await c.req.json<{ title?: string; micOnly?: boolean }>().catch(() => ({}) as { title?: string; micOnly?: boolean })
     const id = randomUUID()
     const r = audio.start(id, !!b.micOnly)
-    jobs.set(id, { id, title: b.title?.trim() || 'Meeting', state: 'recording', startedAt: r.startedAt })
+    jobs.set(id, { id, title: b.title?.trim() || 'Meeting', project: projectOf(c), state: 'recording', startedAt: r.startedAt })
     return c.json({ id, startedAt: r.startedAt })
   })
   app.post('/transcribe/stop', async (c) => {

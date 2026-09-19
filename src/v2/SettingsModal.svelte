@@ -1,5 +1,8 @@
 <script lang="ts">
   // Settings for the current workspace (and a little for this app).
+  import FolderTree from '@lucide/svelte/icons/folder-tree'
+  import { scope, PROJECT_COLORS_LIST as PROJECT_COLORS, type Project } from './project.svelte'
+  import { setProject } from './state.svelte'
   import ConnectDatabase from './ConnectDatabase.svelte'
   import { PACK_TABS } from './packs'
   import X from '@lucide/svelte/icons/x'
@@ -36,6 +39,7 @@
   const PAGES: { id: SettingsPage; label: string; icon: any; group: 'ws' | 'app' }[] = [
     { id: 'general', label: 'General', icon: Building, group: 'ws' },
     { id: 'tabs', label: 'Tabs', icon: LayoutGrid, group: 'ws' },
+    { id: 'projects', label: 'Projects', icon: FolderTree, group: 'ws' },
     { id: 'cycles', label: 'Cycles', icon: Repeat, group: 'ws' },
     { id: 'members', label: 'Members', icon: Users, group: 'ws' },
     { id: 'database', label: 'Database', icon: Database, group: 'ws' },
@@ -43,6 +47,41 @@
     { id: 'models', label: 'Models', icon: Cpu, group: 'app' },
     { id: 'appearance', label: 'Appearance', icon: Sun, group: 'app' },
   ]
+
+  // --- projects ------------------------------------------------------------------
+  let projects = $state<Project[]>([])
+  let newProject = $state('')
+  $effect(() => {
+    projects = scope.list.map((p) => ({ ...p }))
+  })
+  async function saveProjects(list: Project[], enabled?: boolean) {
+    try {
+      const r = await v2.put<{ enabled: boolean; projects: Project[]; canManage?: boolean }>('/projects', { projects: list, ...(enabled === undefined ? {} : { enabled }) })
+      scope.enabled = r.enabled
+      scope.list = r.projects
+      scope.canManage = !!r.canManage
+      if (scope.id && !r.projects.some((p) => p.id === scope.id && !p.archived)) setProject(null)
+      projects = r.projects.map((p) => ({ ...p }))
+    } catch (e) {
+      fail(e)
+    }
+  }
+  const addProject = () => {
+    const name = newProject.trim()
+    if (!name) return
+    newProject = ''
+    saveProjects([...projects, { id: '', name, color: PROJECT_COLORS[projects.length % PROJECT_COLORS.length], access: 'everyone', members: [] }], true)
+  }
+  /** Who can open a project: everyone here, or the people an admin picks. */
+  function setAccess(i: number, access: 'everyone' | 'members') {
+    saveProjects(projects.map((x, k) => (k === i ? { ...x, access, members: access === 'members' ? (x.members ?? []) : [] } : x)))
+  }
+  function toggleMember(i: number, personId: string) {
+    const cur = projects[i].members ?? []
+    const next = cur.includes(personId) ? cur.filter((m) => m !== personId) : [...cur, personId]
+    saveProjects(projects.map((x, k) => (k === i ? { ...x, members: next } : x)))
+  }
+  let openAccess = $state<string | null>(null)
 
   let msg = $state('')
   const flash = (m: string) => {
@@ -302,6 +341,71 @@
             <button class="red" onclick={forget}>{confirmRemove ? 'Click again to remove' : 'Remove'}</button>
           </section>
         {/if}
+      {:else if ui.settingsPage === 'projects'}
+        <p class="lead">Projects split this workspace into separate boards, docs, canvases and meetings, all in the same database. Switch between them under the workspace name. An admin decides who can open each one.</p>
+        {#if !scope.canManage}<p class="note">You can open the projects you are in. An admin adds projects and decides who is in them.</p>{/if}
+        <section>
+          <div class="opt">
+            <div class="dbt grow"><span class="h">Use projects here</span><span class="s">A switcher appears under the workspace name. Existing work stays where it is, in no project, until you move it.</span></div>
+            <button class="switch" class:on={scope.enabled} role="switch" aria-checked={scope.enabled} aria-label="Use projects" onclick={() => saveProjects(projects, !scope.enabled)}><i></i></button>
+          </div>
+        </section>
+        <section>
+          <div class="lab"><b>Projects</b><span>Rename one, change its colour, or remove it. Removing keeps the work and puts it back in no project.</span></div>
+          <div class="plist">
+            {#each projects as p, i (p.id || i)}
+              <div class="pitem">
+                <div class="prow">
+                  <select class="field pcolor" value={p.color} disabled={!scope.canManage} onchange={(e) => saveProjects(projects.map((x, k) => (k === i ? { ...x, color: e.currentTarget.value } : x)))} aria-label="Colour">
+                    {#each PROJECT_COLORS as c}<option value={c}>{c}</option>{/each}
+                  </select>
+                  <i class="pdot {p.color}"></i>
+                  <input
+                    class="field grow"
+                    value={p.name}
+                    disabled={!scope.canManage}
+                    oninput={(e) => (projects[i] = { ...projects[i], name: e.currentTarget.value })}
+                    onblur={() => saveProjects(projects)}
+                    onkeydown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+                  />
+                  {#if scope.canManage}
+                    <button class="ghost" onclick={() => (openAccess = openAccess === p.id ? null : p.id)}>
+                      {(p.access ?? 'everyone') === 'everyone' ? 'Everyone' : `${(p.members ?? []).length} ${(p.members ?? []).length === 1 ? 'person' : 'people'}`}
+                    </button>
+                    <button class="ghost" onclick={() => saveProjects(projects.filter((_, k) => k !== i))}>Remove</button>
+                  {/if}
+                </div>
+                {#if scope.canManage && openAccess === p.id}
+                  <div class="access">
+                    <div class="seg">
+                      <button class:on={(p.access ?? 'everyone') === 'everyone'} onclick={() => setAccess(i, 'everyone')}>Everyone here</button>
+                      <button class:on={p.access === 'members'} onclick={() => setAccess(i, 'members')}>Only chosen people</button>
+                    </div>
+                    {#if p.access === 'members'}
+                      <div class="people">
+                        {#each ui.members as m (m.id)}
+                          <label class="who">
+                            <input type="checkbox" checked={(p.members ?? []).includes(m.id)} onchange={() => toggleMember(i, m.id)} />
+                            <span>{m.name}</span>
+                            {#if m.role === 'admin'}<span class="s">admin, always in</span>{/if}
+                          </label>
+                        {/each}
+                      </div>
+                    {/if}
+                  </div>
+                {/if}
+              </div>
+            {/each}
+            {#if scope.canManage}
+              <div class="prow">
+                <i class="pdot new"></i>
+                <input class="field grow" placeholder="New project, e.g. Website" bind:value={newProject} onkeydown={(e) => e.key === 'Enter' && addProject()} />
+                <button class="primary" disabled={!newProject.trim()} onclick={addProject}>Add</button>
+              </div>
+            {/if}
+          </div>
+          <p class="note">Claude can do this too: "make a project called Website and move these docs into it".</p>
+        </section>
       {:else if ui.settingsPage === 'cycles'}
         <p class="lead">The board works in cycles, like sprints: a fixed run of weeks with a backlog beside it. Pick the length and what happens to unfinished cards when one ends.</p>
         <section>
@@ -723,6 +827,64 @@
   .grow {
     flex: 1;
   }
+  .plist {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .pitem {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .access {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 0 0 4px 108px;
+  }
+  .people {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+  }
+  .who {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: var(--fs-2);
+    color: var(--ink-2);
+  }
+  .who input {
+    accent-color: var(--ink);
+  }
+  .prow {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .pcolor {
+    width: 96px;
+  }
+  .pdot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: var(--muted);
+  }
+  .pdot.new {
+    background: none;
+    border: 1px dashed var(--line-strong);
+  }
+  .pdot.blue { background: #6aa6ff; }
+  .pdot.green { background: #6fcf97; }
+  .pdot.amber { background: #e7b75f; }
+  .pdot.rose { background: #f28ba8; }
+  .pdot.violet { background: #b38cf0; }
+  .pdot.teal { background: #5fd0c5; }
+  .pdot.orange { background: #f0955f; }
+  .pdot.slate { background: #8d97a8; }
   .ghost {
     display: inline-flex;
     align-items: center;

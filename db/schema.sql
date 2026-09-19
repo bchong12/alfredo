@@ -341,6 +341,19 @@ create table if not exists pack_data (
   updated_at timestamptz not null default now()
 );
 
+-- Projects: an optional split of one workspace into separate boards, docs,
+-- canvases and meetings. The project list lives in workspace_settings
+-- ('projects'); this table says which project each item belongs to, so the
+-- items themselves never change shape.
+create table if not exists project_items (
+  kind       text not null check (kind in ('card','doc','canvas','meeting')),
+  item_id    text not null,
+  project_id text not null,
+  created_at timestamptz not null default now(),
+  primary key (kind, item_id)
+);
+create index if not exists project_items_project on project_items (project_id);
+
 -- Row-level security on, no policies. Every server talks to the database with
 -- the service key (which bypasses RLS); the publishable key in the browser is
 -- only for signing in. With RLS off, that public key could read and write
@@ -349,7 +362,7 @@ do $$
 declare t text;
 begin
   foreach t in array array['meetings','transcripts','transcript_parts','summaries','folders','user_keys',
-    'people','weeks','columns','cards','docs','roadmap_items','roadmap_cards','canvases','workspace_settings','pack_data'] loop
+    'people','weeks','columns','cards','docs','roadmap_items','roadmap_cards','canvases','workspace_settings','pack_data','project_items'] loop
     execute format('alter table %I enable row level security', t);
   end loop;
 end $$;

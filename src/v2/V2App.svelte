@@ -17,6 +17,7 @@
   import Welcome from './Welcome.svelte'
   import X from '@lucide/svelte/icons/x'
   import { untrack } from 'svelte'
+  import { scope } from './project.svelte'
   import { ui, visibleTabs, loadWorkspaceState, openSettings, packView } from './state.svelte'
   import { workspace, activeWorkspace, loadWorkspaces } from '../lib/workspace.svelte'
   import { auth, boot } from '../lib/session.svelte'
@@ -49,7 +50,9 @@
     const id = workspace.activeId
     const ok = ready && auth.for === id && !needsLogin
     const who = email
-    if (id && ok) loadWorkspaceState(who)
+    // untrack: loading reads the state it also writes (settings, projects),
+    // and a tracked read there would re-run this effect off its own writes.
+    if (id && ok) untrack(() => loadWorkspaceState(who))
     else if (id && needsLogin) {
       // Nothing of the previous workspace stays on screen while this one asks who you are.
       ui.settings = null
@@ -88,7 +91,7 @@
       {:else if !ui.settings}
         <div class="boot">{ui.error ? '' : ''}</div>
       {:else if tab}
-        {#key `${workspace.activeId}:${tab.id}`}
+        {#key `${workspace.activeId}:${tab.id}:${scope.enabled ? (scope.id ?? 'all') : ''}`}
           {#if tab.type === 'board'}
             <BoardTab tabName={tab.name} columns={tab.columns} />
           {:else if tab.type === 'docs'}

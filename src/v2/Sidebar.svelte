@@ -9,11 +9,13 @@
   import Mic from '@lucide/svelte/icons/mic'
   import Package from '@lucide/svelte/icons/package'
   import WorkspaceMark from './WorkspaceMark.svelte'
+  import ProjectBar from './ProjectBar.svelte'
   import Face from './Face.svelte'
   import ChevronRight from '@lucide/svelte/icons/chevron-right'
   import { ui, visibleTabs, go, openPack, packView } from './state.svelte'
   import { PACK_TABS } from './packs'
   import { activeWorkspace } from '../lib/workspace.svelte'
+  import { scope } from './project.svelte'
 
   let { onsearch }: { onsearch: () => void } = $props()
 
@@ -29,6 +31,8 @@
     <span class="wsname">{ui.settings?.name ?? ws?.name ?? 'Workspace'}</span>
     <ChevronsUpDown size={14} />
   </button>
+
+  {#if scope.enabled}<ProjectBar />{/if}
 
   <button class="search" onclick={onsearch}>
     <Search size={13} />
@@ -81,7 +85,7 @@
     border-right: 1px solid var(--line);
     display: flex;
     flex-direction: column;
-    gap: 18px;
+    gap: 14px;
     padding: 10px;
     box-sizing: border-box;
   }

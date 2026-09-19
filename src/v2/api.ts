@@ -1,5 +1,7 @@
-// The v2 API: the same calls whatever database the workspace lives in.
+// The v2 API: the same calls whatever database the workspace lives in, and
+// whichever project is open (every call carries it; see project.svelte.ts).
 import { api, post } from '../lib/session.svelte'
+import { projectHeader } from './project.svelte'
 
 export type Status = 'todo' | 'progress' | 'review' | 'done'
 export const STATUSES: { id: Status; label: string }[] = [
@@ -20,28 +22,32 @@ export type Card = {
   position: number
   updatedAt: string
   week: string | null
+  /** Which project it is in, when the workspace uses projects. */
+  project?: string | null
 }
 export type Cycles = { length: 1 | 2 | 4; rollover: 'ask' | 'next' | 'backlog'; upcoming: number; since?: string }
 export type CycleInfo = { start: string; end: string; label: string; total: number; done: number; current: boolean; past: boolean }
 export type CyclesView = { current: string; cycles: CycleInfo[]; backlog: number; settings: Cycles; next: string }
-export type DocSummary = { id: string; title: string; folder: string | null; updatedAt: string; excerpt: string }
+export type DocSummary = { id: string; title: string; folder: string | null; updatedAt: string; excerpt: string } & InProject
 export type Doc = DocSummary & { body: string; revision: number }
-export type CanvasSummary = { id: string; title: string; updatedAt: string; nodeCount: number; thumb: string | null }
-export type Canvas = { id: string; title: string; revision: number; nodes: any[]; edges: any[] }
-export type MeetingSummary = { id: string; title: string; startedAt: string; durationS: number | null; hasTranscript: boolean; status: string }
+export type CanvasSummary = { id: string; title: string; updatedAt: string; nodeCount: number; thumb: string | null } & InProject
+export type Canvas = { id: string; title: string; revision: number; nodes: any[]; edges: any[] } & InProject
+export type MeetingSummary = { id: string; title: string; startedAt: string; durationS: number | null; hasTranscript: boolean; status: string } & InProject
 export type Meeting = MeetingSummary & { notes: string; transcript: string | null; revision: number }
 /** board, docs, canvas, meetings, or a pack's type (see packs/). */
 export type TabType = string
 export type TabDef = { id: string; type: TabType; name: string; hidden?: boolean; columns?: string[] }
-export type Settings = { name?: string; logo?: string | null; tabs: TabDef[]; cycles?: Cycles }
+export type Settings = { name?: string; logo?: string | null; tabs: TabDef[]; cycles?: Cycles; projects?: { enabled: boolean } }
+/** Which project an item is in, when the workspace uses them. */
+export type InProject = { project?: string | null }
 
 const P = '/api/v2'
 export const v2 = {
-  get: <T>(path: string) => api<T>(P + path),
-  post: <T>(path: string, body: unknown = {}) => post<T>(P + path, body),
-  put: <T>(path: string, body: unknown) => post<T>(P + path, body, 'PUT'),
-  patch: <T>(path: string, body: unknown) => post<T>(P + path, body, 'PATCH'),
-  del: <T>(path: string) => post<T>(P + path, {}, 'DELETE'),
+  get: <T>(path: string) => api<T>(P + path, projectHeader()),
+  post: <T>(path: string, body: unknown = {}) => post<T>(P + path, body, 'POST', projectHeader()),
+  put: <T>(path: string, body: unknown) => post<T>(P + path, body, 'PUT', projectHeader()),
+  patch: <T>(path: string, body: unknown) => post<T>(P + path, body, 'PATCH', projectHeader()),
+  del: <T>(path: string) => post<T>(P + path, {}, 'DELETE', projectHeader()),
 }
 
 /** "4m ago", "Yesterday", "Sep 12". */

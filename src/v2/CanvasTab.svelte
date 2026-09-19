@@ -2,6 +2,8 @@
   // Canvas: whiteboards. Frames that hug their content, outlined objects,
   // right-angle arrows, tools along the bottom. Same JSON as React Flow, so a
   // board made elsewhere in that format opens here unchanged.
+  import ProjectPicker from './ProjectPicker.svelte'
+  import ProjectTag from './ProjectTag.svelte'
   import { SvelteFlow, Background, BackgroundVariant, type Node, type Edge, type Connection } from '@xyflow/svelte'
   import '@xyflow/svelte/dist/style.css'
   import Plus from '@lucide/svelte/icons/plus'
@@ -366,6 +368,7 @@
           {/if}
         </div>
       {/if}
+      {#if canvas}<ProjectPicker kind="canvas" id={canvas.id} project={canvas.project ?? null} onchange={(p) => (list = list.map((x) => (x.id === canvas?.id ? { ...x, project: p } : x)))} />{/if}
       <button class="icon" title="Fit board" onclick={() => flow?.fitView({ padding: 0.12, duration: 450 })}><Shapes size={13} /></button>
       <button class="icon" title="Delete canvas" onclick={removeCanvas}><Trash2 size={13} /></button>
       <span class="state"><i class:live={saving !== 'conflict'}></i>{saving === 'saving' ? 'Saving…' : saving === 'conflict' ? 'Changed elsewhere: reload' : 'Saved'}</span>
@@ -447,7 +450,7 @@
             <div class="thumb">
               {#if c.thumb}<img src={`data:image/svg+xml;utf8,${encodeURIComponent(c.thumb)}`} alt="" loading="lazy" />{:else}<span class="blank">Empty canvas</span>{/if}
             </div>
-            <div class="info"><span class="t">{c.title}</span><span class="s">Edited {ago(c.updatedAt)}</span></div>
+            <div class="info"><span class="t">{c.title}</span><span class="s"><ProjectTag project={c.project ?? null} />Edited {ago(c.updatedAt)}</span></div>
           </button>
         {:else}
           {#if loadingList}

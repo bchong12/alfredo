@@ -108,10 +108,10 @@ export async function signOut() {
 }
 
 /** POST for the REST API. Same session handling as api(). */
-export async function post<T>(path: string, body: unknown, method = 'POST'): Promise<T> {
+export async function post<T>(path: string, body: unknown, method = 'POST', extra: Record<string, string> = {}): Promise<T> {
   const r = await fetch(apiUrl(path), {
     method,
-    headers: { 'Content-Type': 'application/json', ...apiHeaders() },
+    headers: { 'Content-Type': 'application/json', ...apiHeaders(), ...extra },
     body: JSON.stringify(body),
   })
   if (r.status === 401) {
@@ -126,8 +126,8 @@ export async function post<T>(path: string, body: unknown, method = 'POST'): Pro
 }
 
 /** fetch for the REST API, carrying the session and handling its expiry. */
-export async function api<T>(path: string): Promise<T> {
-  const r = await fetch(apiUrl(path), { headers: apiHeaders() })
+export async function api<T>(path: string, extra: Record<string, string> = {}): Promise<T> {
+  const r = await fetch(apiUrl(path), { headers: { ...apiHeaders(), ...extra } })
   if (r.status === 401) {
     auth.session = null
     throw new Error('session expired')
