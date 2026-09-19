@@ -23,6 +23,7 @@ import { prefixFor, setRefPrefix } from '../src/lib/ref'
 import { v2Routes } from './v2'
 import * as connect from './connect'
 import * as cfDeploy from './cloudflare-deploy'
+import * as google from './google-auth'
 
 const PORT = Number(process.env.CRM_PORT ?? 29981)
 const MCP_PATH = '/mcp'
@@ -135,7 +136,18 @@ app.use('/api/*', async (c, next) => {
     // Each remote workspace checks sessions against its own Supabase project.
     const project = ws.supabaseFor(store.workspace.id)
     if (!project) return c.json({ error: 'This workspace has lost its Supabase keys. Reconnect it in Settings > Database.' }, 503)
-    return requireSession(c, next, project.url === process.env.SUPABASE_URL ? undefined : project)
+    const known = project.url === process.env.SUPABASE_URL && project.serviceKey === process.env.SUPABASE_SERVICE_ROLE_KEY
+    return requireSession(
+      c,
+      async () => {
+        // A membership holds no secret key: the database answers as the person
+        // asking, so their client is built from the token they just showed.
+        if (project.mode !== 'member') return next()
+        const token = (c.req.header('authorization') ?? '').replace(/^Bearer /, '')
+        return ctx.run({ ...store, db: ws.memberDb(store.workspace.id, token) }, next)
+      },
+      known ? undefined : project,
+    )
   })
 })
 
@@ -218,6 +230,53 @@ app.post('/api/workspaces/supabase', async (c) => {
     return c.json(await connect.connectSupabase(b))
   } catch (e) {
     if (e instanceof connect.NeedsProject) return c.json({ error: e.message, projects: e.projects }, 409)
+    return c.json({ error: (e as Error).message }, 400)
+  }
+})
+/* Sign in with Google, through the browser and back to this server. */
+app.post('/api/workspaces/:id/google', async (c) => {
+  if (PUBLIC) return c.json({ error: 'not available' }, 404)
+  const k = ws.supabaseFor(c.req.param('id'))
+  if (!k) return c.json({ error: 'That workspace does not sign people in.' }, 400)
+  const { state } = google.startGoogle({ workspace: c.req.param('id'), supabaseUrl: k.url, port: PORT })
+  return c.json({ state })
+})
+app.get('/api/workspaces/:id/google/:state', (c) => c.json(google.collectGoogle(c.req.param('state'))))
+app.get('/auth/callback', (c) => c.html(google.CALLBACK_PAGE))
+app.post('/auth/callback', async (c) => {
+  const b = await c.req.json<{ state?: string; access_token?: string; refresh_token?: string; error?: string }>()
+  return c.json({ ok: google.finishGoogle(b.state ?? '', b) })
+})
+
+/* An invite link, pasted into Alfredo: it carries the project URL, the
+ * publishable key and the invitation, never a secret. */
+app.post('/api/workspaces/join/inspect', async (c) => {
+  if (PUBLIC) return c.json({ error: 'not available' }, 404)
+  const b = await c.req.json<{ link?: string }>()
+  try {
+    return c.json(connect.inspectInvite(b.link ?? ''))
+  } catch (e) {
+    return c.json({ error: (e as Error).message }, 400)
+  }
+})
+app.post('/api/workspaces/join', async (c) => {
+  if (PUBLIC) return c.json({ error: 'not available' }, 404)
+  const b = await c.req.json<{ link?: string; name?: string; password?: string }>()
+  try {
+    return c.json(await connect.joinWithLink(b.link ?? '', { name: b.name, password: b.password }))
+  } catch (e) {
+    return c.json({ error: (e as Error).message }, 400)
+  }
+})
+/* Claiming the invitation, once they are signed in: the database writes the
+ * person and the memberships itself (alfredo_join). */
+app.post('/api/workspaces/:id/claim', async (c) => {
+  if (PUBLIC) return c.json({ error: 'not available' }, 404)
+  const b = await c.req.json<{ token?: string; name?: string }>()
+  const auth = (c.req.header('authorization') ?? '').replace(/^Bearer /, '')
+  try {
+    return c.json(await connect.claimInvite(c.req.param('id'), { token: b.token ?? '', name: b.name, session: auth }))
+  } catch (e) {
     return c.json({ error: (e as Error).message }, 400)
   }
 })

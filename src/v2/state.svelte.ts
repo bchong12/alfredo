@@ -66,14 +66,16 @@ export function setProject(id: string | null) {
 export async function loadProjects() {
   const w = workspace.activeId
   try {
-    const r = await v2.get<{ enabled: boolean; projects: Project[]; canManage?: boolean }>('/projects')
+    const r = await v2.get<{ enabled: boolean; projects: Project[]; canManage?: boolean; me?: string | null }>('/projects')
     scope.enabled = r.enabled
     scope.list = r.projects ?? []
     scope.canManage = !!r.canManage
+    scope.meId = r.me ?? null
   } catch {
     scope.enabled = false
     scope.list = []
     scope.canManage = false
+    scope.meId = null
   }
   recallProject(w)
 }

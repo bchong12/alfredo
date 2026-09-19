@@ -5,16 +5,17 @@
   import Laptop from '@lucide/svelte/icons/laptop'
   import Cloud from '@lucide/svelte/icons/cloud'
   import Database from '@lucide/svelte/icons/database'
+  import Ticket from '@lucide/svelte/icons/ticket'
   import ArrowLeft from '@lucide/svelte/icons/arrow-left'
   import Check from '@lucide/svelte/icons/check'
   import LoaderCircle from '@lucide/svelte/icons/loader-circle'
   import CopyNode from './CopyNode.svelte'
   import { api, post } from '../lib/session.svelte'
-  import { createWorkspace, loadWorkspaces, pick } from '../lib/workspace.svelte'
+  import { createWorkspace, loadWorkspaces, pick, rememberInvite } from '../lib/workspace.svelte'
 
   let { onconnected }: { onconnected: (id: string) => void } = $props()
 
-  type Mode = null | 'local' | 'supabase' | 'cloudflare'
+  type Mode = null | 'local' | 'supabase' | 'cloudflare' | 'invite'
   type Project = { ref: string; name: string; region: string; status: string }
   type Job = { step: string; log: string[]; error?: string; workspaceId: string | null }
 
@@ -116,6 +117,30 @@
       await done(w.id)
     })
 
+  // --- joining with an invite ------------------------------------------------------
+  let link = $state('')
+  let joining = $state<{ kind: 'supabase' | 'cloudflare'; name: string } | null>(null)
+  let joinName = $state('')
+  let joinPassword = $state('')
+
+  const lookAtLink = () =>
+    attempt(async () => {
+      joining = await post<{ kind: 'supabase' | 'cloudflare'; name: string }>('/api/workspaces/join/inspect', { link })
+      // A Cloudflare workspace signs people in itself, so it needs a password now.
+      if (joining.kind === 'supabase') await useInvite()
+    })
+
+  const useInvite = () =>
+    attempt(async () => {
+      const r = await post<{ workspace: { id: string }; token: string | null }>('/api/workspaces/join', {
+        link,
+        name: joinName.trim() || undefined,
+        password: joinPassword || undefined,
+      })
+      if (r.token) rememberInvite(r.workspace.id, r.token)
+      await done(r.workspace.id)
+    })
+
   function choose(m: Mode) {
     mode = m
     err = ''
@@ -138,11 +163,26 @@
       <span class="dbi"><Cloud size={15} /></span>
       <span class="dbt"><b>Cloudflare D1</b><span>Shared with your team, in your own Cloudflare account. Alfredo can create it for you.</span></span>
     </button>
+    <button class="opt" onclick={() => choose('invite')}>
+      <span class="dbi"><Ticket size={15} /></span>
+      <span class="dbt"><b>I have an invite</b><span>Someone sent you a link to their workspace. You need no keys and no name: the link carries both.</span></span>
+    </button>
     <p class="hint">Or ask Claude through the Alfredo MCP: “connect my Supabase project to a new workspace”.</p>
   {:else}
-    <button class="back" onclick={() => ((mode = null), (err = ''), (setup = null), (job = null))} disabled={busy}><ArrowLeft size={13} /> {name}</button>
+    <button class="back" onclick={() => ((mode = null), (err = ''), (setup = null), (job = null))} disabled={busy}><ArrowLeft size={13} /> {mode === 'invite' ? 'Invite' : name}</button>
 
-    {#if mode === 'local'}
+    {#if mode === 'invite'}
+      {#if joining?.kind === 'cloudflare'}
+        <p class="lead">You were invited to {joining.name}. Choose a password for it; the workspace keeps your sign-in, and shows you the projects you were put in.</p>
+        <input class="field" placeholder="Your name" bind:value={joinName} />
+        <input class="field" type="password" placeholder="A password, at least 8 characters" bind:value={joinPassword} onkeydown={(e) => e.key === 'Enter' && joinPassword.length >= 8 && useInvite()} />
+        <div><button class="primary" disabled={busy || joinPassword.length < 8} onclick={useInvite}>{busy ? 'Joining…' : 'Join'}</button></div>
+      {:else}
+        <p class="lead">Paste the link an admin sent you. Alfredo connects to their workspace without any secret key, then asks you to sign in; what you can see is their database's decision, not this Mac's.</p>
+        <input class="field mono" placeholder="alfredo:join:…" bind:value={link} onkeydown={(e) => e.key === 'Enter' && link.trim() && lookAtLink()} />
+        <div><button class="primary" disabled={busy || !link.trim()} onclick={lookAtLink}>{busy ? 'Connecting…' : 'Continue'}</button></div>
+      {/if}
+    {:else if mode === 'local'}
       <p class="lead">A private workspace in a folder on this Mac. Copy the folder to back it up.</p>
       <div><button class="primary" disabled={busy} onclick={local}>{busy ? 'Creating…' : 'Create workspace'}</button></div>
     {:else if mode === 'supabase'}

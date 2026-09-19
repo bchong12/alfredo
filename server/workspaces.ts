@@ -33,7 +33,7 @@ export type Workspace = {
    * keychain. Absent on a workspace made from SUPABASE_URL and friends in
    * the environment (the original setup), which keeps reading them there.
    */
-  supabase?: { url: string } | null
+  supabase?: { url: string; mode?: 'owner' | 'member' } | null
   /** Repositories that belong to this workspace, for terminal sessions. */
   repos: string[]
   /** Card refs: PEA-12. Three letters of the name unless set. */
@@ -175,18 +175,20 @@ export function createCloudflare(opts: { name: string; url: string; token: strin
 }
 
 /** Connect a workspace to its own Supabase project. Keys go to the keychain. */
-export function createSupabase(opts: { name: string; url: string; anonKey: string; serviceKey: string; id?: string }) {
+export function createSupabase(opts: { name: string; url: string; anonKey: string; serviceKey?: string | null; id?: string }) {
   const r = read()
   let id = opts.id ?? slug(opts.name)
   if (r.workspaces.some((w) => w.id === id)) {
     for (let i = 2; r.workspaces.some((w) => w.id === id); i++) id = `${slug(opts.name)}-${i}`
   }
-  setSecret(`supabase:${id}`, JSON.stringify({ anonKey: opts.anonKey, serviceKey: opts.serviceKey }))
+  setSecret(`supabase:${id}`, JSON.stringify({ anonKey: opts.anonKey, serviceKey: opts.serviceKey ?? null }))
   const ws: Workspace = {
     id,
     name: opts.name.trim() || 'Workspace',
     kind: 'remote',
-    supabase: { url: opts.url.replace(/\/$/, '') },
+    // A member holds only the publishable key: what they may see is the
+    // database's decision, made from their own sign-in.
+    supabase: { url: opts.url.replace(/\/$/, ''), mode: opts.serviceKey ? 'owner' : 'member' },
     repos: [],
     createdAt: new Date().toISOString(),
   }
@@ -196,7 +198,7 @@ export function createSupabase(opts: { name: string; url: string; anonKey: strin
 }
 
 /** A remote workspace's Supabase URL and keys: its own, or the environment's for the original one. */
-export function supabaseFor(id: string): { url: string; anonKey: string; serviceKey: string } | null {
+export function supabaseFor(id: string): { url: string; anonKey: string; serviceKey: string | null; mode: 'owner' | 'member' } | null {
   const ws = get(id)
   if (!ws || ws.kind !== 'remote') return null
   if (ws.supabase?.url) {
@@ -204,7 +206,7 @@ export function supabaseFor(id: string): { url: string; anonKey: string; service
     if (!raw) return null
     try {
       const k = JSON.parse(raw)
-      return { url: ws.supabase.url, anonKey: k.anonKey, serviceKey: k.serviceKey }
+      return { url: ws.supabase.url, anonKey: k.anonKey, serviceKey: k.serviceKey ?? null, mode: k.serviceKey ? 'owner' : 'member' }
     } catch {
       return null
     }
@@ -212,7 +214,7 @@ export function supabaseFor(id: string): { url: string; anonKey: string; service
   const url = env('SUPABASE_URL')
   const serviceKey = env('SUPABASE_SERVICE_ROLE_KEY')
   const anonKey = env('SUPABASE_PUBLISHABLE_KEY') ?? env('SUPABASE_ANON_KEY')
-  return url && serviceKey ? { url, serviceKey, anonKey: anonKey ?? '' } : null
+  return url && serviceKey ? { url, serviceKey, anonKey: anonKey ?? '', mode: 'owner' as const } : null
 }
 
 const remotes = new Map<string, unknown>()
@@ -224,6 +226,7 @@ function remoteDbFor(id: string) {
   if (have) return have
   const k = supabaseFor(id)
   if (!k) throw new Error('This workspace has lost its Supabase keys. Reconnect it in Settings > Database.')
+  if (!k.serviceKey) throw new Error('This workspace is a membership: it needs your sign-in, which travels with each request.')
   const client = createClient(k.url, k.serviceKey, { auth: { persistSession: false, autoRefreshToken: false } })
   remotes.set(id, client)
   return client
@@ -276,11 +279,25 @@ export function cloudflareFor(id: string): CloudflareWorkspace | null {
 }
 const opening = new Map<string, Promise<LocalDb>>()
 
+/** A client that speaks as the person asking, for a workspace we hold no secret key for. */
+export function memberDb(id: string, token: string) {
+  const k = supabaseFor(id)
+  if (!k) throw new Error('This workspace has lost its Supabase connection. Reconnect it in Settings > Database.')
+  return createClient(k.url, k.anonKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${token}` } },
+  })
+}
+
 /** The database behind a workspace. Local ones open once and stay open. */
 export async function dbFor(id: string): Promise<unknown> {
   const ws = get(id)
   if (!ws) throw new Error(`no such workspace: ${id}`)
-  if (ws.kind === 'remote') return remoteDbFor(id)
+  if (ws.kind === 'remote') {
+    // Member workspaces get their client per request, built from the session.
+    if (ws.supabase?.mode === 'member') return null
+    return remoteDbFor(id)
+  }
   if (ws.kind === 'cloudflare') return cloudflareFor(id)
   const have = opened.get(id)
   if (have) return have

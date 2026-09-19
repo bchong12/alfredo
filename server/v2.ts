@@ -12,9 +12,10 @@ import { currentWeek, listWeeks, localToday, endsOn as weekEnds, type Week as We
 import { formatRef, prefixFor } from '../src/lib/ref'
 import { CloudflareWorkspace, CloudflareError } from './cloudflare-workspace'
 import { markdownToTiptap, tiptapToMarkdown } from './tiptap'
-import type { Workspace } from './workspaces'
+import { supabaseFor, type Workspace } from './workspaces'
+import { inviteLink } from './invite-link'
 import { unlink } from 'node:fs/promises'
-import { randomUUID } from 'node:crypto'
+import { randomUUID, randomBytes, createHash } from 'node:crypto'
 import * as audio from './audio'
 import { transcribe } from './ai-local'
 import { summarize, hasLocalChat, teamContext, type Summary } from './ai'
@@ -85,23 +86,47 @@ export type Settings = { name?: string; logo?: string | null; tabs: TabDef[]; cy
  * to is a mapping kept beside the items, so it works the same on every
  * database and never changes the items themselves.
  */
+/** What someone may do inside a project. Workspace admins are 'admin' everywhere. */
+export type ProjectRole = 'admin' | 'write' | 'read'
+export const PROJECT_ROLES: ProjectRole[] = ['admin', 'write', 'read']
+export type ProjectMember = { personId: string; role: ProjectRole }
 export type Project = {
   id: string
   name: string
   color: string
   archived?: boolean
-  /** Who can open it: everyone in the workspace, or only the people listed. */
-  access?: 'everyone' | 'members'
-  /** People ids (see members()), when access is 'members'. Admins always get in. */
-  members?: string[]
+  /** Everyone listed here is in the project; workspace admins are in every one. */
+  members: ProjectMember[]
+  /** Set when the database decided this itself, and then it is the answer. */
+  role?: ProjectRole | null
+}
+/** An invitation to join the workspace, and the projects it puts someone in. */
+export type Invite = {
+  id: string
+  email: string
+  role: 'admin' | 'member'
+  projects: { id: string; role: ProjectRole }[]
+  createdAt: string
+  expiresAt: string
+  usedAt?: string | null
 }
 export type ItemKind = 'card' | 'doc' | 'canvas' | 'meeting'
 /** Who is asking: their row in this workspace's people, and whether they run it. */
 export type Viewer = { id: string | null; admin: boolean }
 
-/** Whether someone may open a project. Admins always may; so does anyone listed. */
-export const canOpenProject = (p: Project, me: Viewer) =>
-  me.admin || (p.access ?? 'everyone') === 'everyone' || (me.id ? (p.members ?? []).includes(me.id) : false)
+/** What someone may do in a project: their role, or null when they are not in it. */
+export function projectRole(p: Project, me: Viewer): ProjectRole | null {
+  // A database that decides for itself (a Worker) says so in the project.
+  if (p.role !== undefined) return p.role
+  if (me.admin) return 'admin'
+  return (me.id ? p.members.find((m) => m.personId === me.id)?.role : null) ?? null
+}
+export const canOpenProject = (p: Project, me: Viewer) => projectRole(p, me) !== null
+/** Read-only members may open a project but not change anything in it. */
+export const canWriteProject = (p: Project, me: Viewer) => {
+  const r = projectRole(p, me)
+  return r === 'admin' || r === 'write'
+}
 export const ITEM_KINDS: ItemKind[] = ['card', 'doc', 'canvas', 'meeting']
 /** Asking for the work that belongs to no project at all. */
 export const NO_PROJECT = 'none'
@@ -149,13 +174,29 @@ export interface Store {
   pack(key: string): Promise<{ value: unknown; updatedAt: string } | null>
   setPack(key: string, value: unknown): Promise<void>
   packKeys(): Promise<{ key: string; updatedAt: string; bytes: number }[]>
+  /** Who the database says is asking, where it keeps its own people. */
+  viewer?(): Promise<Viewer | null>
   projects(): Promise<Project[]>
   saveProjects(list: Project[]): Promise<void>
+  /** Pending and spent invitations. */
+  invites(): Promise<Invite[]>
+  createInvite(i: { email: string; role: 'admin' | 'member'; projects: { id: string; role: ProjectRole }[] }): Promise<{ invite: Invite; token: string }>
+  revokeInvite(id: string): Promise<void>
+  /** The invitation a token opens, if it is still good. */
+  inviteFor(token: string): Promise<Invite | null>
+  /** Spend an invitation: the person joins, with the projects it names. */
+  acceptInvite(token: string, person: { name: string; email: string; userId?: string | null }): Promise<Person>
   /** "kind:id" -> project id, for every item that belongs to one. */
   projectMap(): Promise<Record<string, string>>
   /** Put items in a project, or take them out of any (null). */
   assign(kind: ItemKind, ids: string[], project: string | null): Promise<void>
 }
+
+// --- invitations ---------------------------------------------------------------
+
+/** The secret in an invite link. Only its hash is stored. */
+export const inviteToken = () => randomBytes(24).toString('base64url')
+export const hashToken = (t: string) => createHash('sha256').update(t).digest('hex')
 
 // --- canvas thumbnails: the board itself, drawn small --------------------------
 
@@ -549,11 +590,77 @@ class SqlStore implements Store {
   }
 
   async projects(): Promise<Project[]> {
-    const rows = await q<any[]>(db.from('workspace_settings').select('value').eq('key', 'projects').limit(1))
-    return (rows[0]?.value as Project[]) ?? []
+    const [rows, members] = await Promise.all([
+      q<any[]>(db.from('projects').select('*').order('position')),
+      q<any[]>(db.from('project_members').select('project_id, person_id, role')),
+    ])
+    return rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      color: r.color,
+      ...(r.archived_at ? { archived: true } : {}),
+      members: members.filter((m) => m.project_id === r.id).map((m) => ({ personId: m.person_id, role: m.role as ProjectRole })),
+    }))
   }
   async saveProjects(list: Project[]) {
-    await q(db.from('workspace_settings').upsert({ key: 'projects', value: list, updated_at: new Date().toISOString() }))
+    const before = await this.projects()
+    for (const p of before) if (!list.some((x) => x.id === p.id)) await q(db.from('projects').delete().eq('id', p.id))
+    for (const [i, p] of list.entries()) {
+      await q(
+        db.from('projects').upsert({ id: p.id, name: p.name, color: p.color, position: i, archived_at: p.archived ? new Date().toISOString() : null }),
+      )
+      await q(db.from('project_members').delete().eq('project_id', p.id))
+      if (p.members.length) await q(db.from('project_members').insert(p.members.map((m) => ({ project_id: p.id, person_id: m.personId, role: m.role }))))
+    }
+  }
+
+  private shapeInvite = (r: any): Invite => ({
+    id: r.id,
+    email: r.email,
+    role: r.role,
+    projects: r.projects ?? [],
+    createdAt: r.created_at,
+    expiresAt: r.expires_at,
+    usedAt: r.used_at ?? null,
+  })
+  async invites() {
+    const rows = await q<any[]>(db.from('invites').select('*').order('created_at', { ascending: false }))
+    return rows.map(this.shapeInvite)
+  }
+  async createInvite(i: { email: string; role: 'admin' | 'member'; projects: { id: string; role: ProjectRole }[] }) {
+    const token = inviteToken()
+    const expires = new Date(Date.now() + 14 * 86400000).toISOString()
+    await q(db.from('invites').insert({ token_hash: hashToken(token), email: i.email, role: i.role, projects: i.projects, expires_at: expires }))
+    const rows = await q<any[]>(db.from('invites').select('*').eq('token_hash', hashToken(token)).limit(1))
+    return { invite: this.shapeInvite(rows[0]), token }
+  }
+  async revokeInvite(id: string) {
+    await q(db.from('invites').delete().eq('id', id))
+  }
+  async inviteFor(token: string) {
+    const rows = await q<any[]>(db.from('invites').select('*').eq('token_hash', hashToken(token)).limit(1))
+    const r = rows[0]
+    if (!r || r.used_at || Date.parse(r.expires_at) < Date.now()) return null
+    return this.shapeInvite(r)
+  }
+  async acceptInvite(token: string, person: { name: string; email: string; userId?: string | null }) {
+    const invite = await this.inviteFor(token)
+    if (!invite) throw new Error('This invitation is no longer good. Ask for a new one.')
+    if (invite.email.toLowerCase() !== person.email.toLowerCase()) throw new Error('This invitation was sent to a different email.')
+    const have = (await q<any[]>(db.from('people').select('*').ilike('email', person.email).limit(1)))[0]
+    let row = have
+    if (row) {
+      await q(db.from('people').update({ role: invite.role, active: true, user_id: person.userId ?? row.user_id ?? null }).eq('id', row.id))
+    } else {
+      await q(db.from('people').insert({ name: person.name, email: person.email, role: invite.role, user_id: person.userId ?? null, position: Date.now() / 1e12 }))
+      row = (await q<any[]>(db.from('people').select('*').ilike('email', person.email).limit(1)))[0]
+    }
+    for (const p of invite.projects) {
+      await q(db.from('project_members').delete().eq('project_id', p.id).eq('person_id', row.id))
+      await q(db.from('project_members').insert({ project_id: p.id, person_id: row.id, role: p.role }))
+    }
+    await q(db.from('invites').update({ used_at: new Date().toISOString() }).eq('id', invite.id))
+    return { id: row.id, name: row.name, email: row.email ?? null, avatar: row.avatar_url ?? null, role: row.role ?? 'member' }
   }
   async projectMap() {
     const rows = await q<{ kind: string; item_id: string; project_id: string }[]>(db.from('project_items').select('kind, item_id, project_id'))
@@ -861,19 +968,118 @@ class CloudflareStore implements Store {
     return items.map((i) => ({ key: i.title.slice(PACK_PREFIX.length), updatedAt: i.updatedAt ?? i.updated_at ?? '', bytes: 0 }))
   }
 
-  // Projects ride in the same hidden settings document as the cycle weeks.
+  /**
+   * Alfredo's own Worker keeps projects, memberships and invitations in D1 and
+   * decides access there. An older Worker has none of that, so those
+   * calls come back 404 and the settings document stands in, with this Mac
+   * doing the deciding.
+   */
+  private worker = true
+  private async tryWorker<T>(path: string, init?: { method?: string; body?: unknown }): Promise<T | null> {
+    if (!this.worker) return null
+    try {
+      return await this.api.call<T>(path, init)
+    } catch (e) {
+      if (e instanceof CloudflareError && e.status === 404) {
+        this.worker = false
+        return null
+      }
+      throw e
+    }
+  }
+
+  /** The Worker knows its own people, so it says who this is. */
+  async viewer(): Promise<Viewer | null> {
+    const s = await this.api.call<{ user: { id: string; role: string } | null }>('/session').catch(() => null)
+    if (!s?.user) return null
+    return { id: s.user.id, admin: s.user.role === 'admin' || s.user.role === 'owner' }
+  }
   async projects(): Promise<Project[]> {
-    return (await this.raw()).projects ?? []
+    const live = await this.tryWorker<{ projects: Project[] }>('/projects')
+    if (live) return live.projects.map((p) => ({ ...p, members: p.members ?? [] }))
+    return ((await this.raw()).projects ?? []).map((p: any) => ({ ...p, members: p.members ?? [] }))
   }
   async saveProjects(list: Project[]) {
+    const live = await this.tryWorker('/projects', { method: 'PUT', body: { projects: list } })
+    if (live) return
     const cur = await this.raw()
     await this.writeRaw({ ...cur, projects: list })
   }
+  async invites(): Promise<Invite[]> {
+    const live = await this.tryWorker<any[]>('/invites')
+    if (live)
+      return live.map((i) => ({
+        id: i.id,
+        email: i.email,
+        role: i.role,
+        projects: i.projects ?? [],
+        createdAt: i.created_at ?? '',
+        expiresAt: new Date(i.expires_at ?? Date.now()).toISOString(),
+        usedAt: i.used_at ?? null,
+      }))
+    return ((await this.raw()).invites ?? []).map((i: any) => ({ ...i, projects: i.projects ?? [] }))
+  }
+  async createInvite(i: { email: string; role: 'admin' | 'member'; projects: { id: string; role: ProjectRole }[] }) {
+    const live = await this.tryWorker<{ token: string; invite: any }>('/invites', { method: 'POST', body: i })
+    if (live)
+      return {
+        token: live.token,
+        invite: { ...live.invite, projects: live.invite.projects ?? [], createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 14 * 86400000).toISOString() } as Invite,
+      }
+    const token = inviteToken()
+    const invite: Invite = {
+      id: randomUUID(),
+      email: i.email,
+      role: i.role,
+      projects: i.projects,
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 14 * 86400000).toISOString(),
+      usedAt: null,
+    }
+    const cur = await this.raw()
+    await this.writeRaw({ ...cur, invites: [...(cur.invites ?? []), { ...invite, tokenHash: hashToken(token) }] })
+    return { invite, token }
+  }
+  async revokeInvite(id: string) {
+    const live = await this.tryWorker(`/invites/${id}`, { method: 'DELETE' })
+    if (live) return
+    const cur = await this.raw()
+    await this.writeRaw({ ...cur, invites: (cur.invites ?? []).filter((i: any) => i.id !== id) })
+  }
+  async inviteFor(token: string) {
+    const hash = hashToken(token)
+    const hit = (await this.raw()).invites?.find((i: any) => i.tokenHash === hash)
+    if (!hit || hit.usedAt || Date.parse(hit.expiresAt) < Date.now()) return null
+    const { tokenHash: _drop, ...invite } = hit
+    return invite as Invite
+  }
+  async acceptInvite(token: string, person: { name: string; email: string; userId?: string | null }) {
+    const invite = await this.inviteFor(token)
+    if (!invite) throw new Error('This invitation is no longer good. Ask for a new one.')
+    if (invite.email.toLowerCase() !== person.email.toLowerCase()) throw new Error('This invitation was sent to a different email.')
+    // The Worker keeps the people; the memberships live beside the projects.
+    await this.api.call('/invites', { method: 'POST', body: { email: person.email, role: invite.role === 'admin' ? 'owner' : 'editor' } }).catch(() => {})
+    const who = (await this.members()).find((m) => m.email?.toLowerCase() === person.email.toLowerCase())
+    const cur = await this.raw()
+    const projects = (cur.projects ?? []).map((p: any) => {
+      const want = invite.projects.find((x) => x.id === p.id)
+      if (!want || !who) return p
+      const members = [...(p.members ?? []).filter((m: ProjectMember) => m.personId !== who.id), { personId: who.id, role: want.role }]
+      return { ...p, members }
+    })
+    const invites = (cur.invites ?? []).map((i: any) => (i.id === invite.id ? { ...i, usedAt: new Date().toISOString() } : i))
+    await this.writeRaw({ ...cur, projects, invites })
+    return who ?? { id: person.email, name: person.name, email: person.email, avatar: null, role: invite.role }
+  }
   async projectMap() {
+    const live = await this.tryWorker<Record<string, string>>('/project-items')
+    if (live) return live
     return ((await this.raw()).projectItems ?? {}) as Record<string, string>
   }
   async assign(kind: ItemKind, ids: string[], project: string | null) {
     if (!ids.length) return
+    const live = await this.tryWorker('/projects/assign', { method: 'POST', body: { kind, ids, project } })
+    if (live) return
     const cur = await this.raw()
     const map = { ...(cur.projectItems ?? {}) }
     for (const id of ids) {
@@ -992,13 +1198,20 @@ export function v2Routes(current: () => { workspace: Workspace; db: unknown } | 
 
   app.get('/members', async (c) => c.json(await store().members()))
   app.post('/members/invite', async (c) => {
+    const { me } = await mine(c)
+    if (!me.admin) return c.json({ error: 'Only an admin can add people.' }, 403)
     const b = await c.req.json<{ email: string; role?: string }>()
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(b.email ?? '')) return c.json({ error: 'Enter a valid email.' }, 400)
     return c.json(await store().invite(b.email.trim().toLowerCase(), b.role === 'admin' ? 'admin' : 'member'))
   })
   app.patch('/members/:id', async (c) => {
-    whoCache.clear()
     const b = await c.req.json<{ role?: string; avatar?: string }>()
+    const { me } = await mine(c)
+    // Anyone may set their own photo; only an admin hands out roles, and an
+    // admin may pass that on (Alfredo never stops the last one stepping down).
+    if (b.role && !me.admin) return c.json({ error: 'Only an admin can change what someone may do.' }, 403)
+    if (b.avatar && !me.admin && me.id !== c.req.param('id')) return c.json({ error: "You can only change your own photo." }, 403)
+    whoCache.clear()
     if (b.role) await store().setRole(c.req.param('id'), b.role === 'admin' ? 'admin' : 'member')
     if (b.avatar) {
       if (!/^data:image\/(png|jpeg|webp);base64,/.test(b.avatar) || b.avatar.length > 400_000) {
@@ -1034,14 +1247,17 @@ export function v2Routes(current: () => { workspace: Workspace; db: unknown } | 
   /** Keep what belongs to the project (all when unscoped) and say which project each item is in. */
   async function scoped<T extends { id: string }>(c: any, kind: ItemKind, list: T[]): Promise<(T & { project: string | null })[]> {
     const p = projectOf(c)
-    const [map, { allowed }] = await Promise.all([mapOf(store()), mine(c)])
-    // Across all projects you see your own and anything in no project at all.
+    const [map, { me, allowed }, set] = await Promise.all([mapOf(store()), mine(c), store().settings()])
     const ok = new Set(allowed.map((x) => x.id))
+    // Without projects a workspace is one room. With them, you see yours, and
+    // work that is in none waits for an admin to file it.
+    const unfiledIsMine = !set.projects?.enabled || me.admin
     return list
       .filter((x) => {
         const inP = map[`${kind}:${x.id}`]
         if (p === NO_PROJECT) return !inP
-        return p ? inP === p : !inP || ok.has(inP)
+        if (p) return inP === p
+        return inP ? ok.has(inP) : unfiledIsMine
       })
       .map((x) => ({ ...x, project: map[`${kind}:${x.id}`] ?? null }))
   }
@@ -1056,6 +1272,28 @@ export function v2Routes(current: () => { workspace: Workspace; db: unknown } | 
     await store().assign(kind, [item.id], p)
     return { ...item, project: p }
   }
+  /**
+   * Refuses a write this person may not make: into a read-only project, or on
+   * an item that lives in one. Items in no project follow the workspace.
+   */
+  async function guardWrite(c: any, kind: ItemKind, id?: string) {
+    const st = store()
+    const { me, all } = await mine(c)
+    const scoped = projectOf(c)
+    const check = async (pid: string | null | undefined) => {
+      if (!pid || pid === NO_PROJECT) return null
+      const p = all.find((x) => x.id === pid)
+      if (!p) return c.json({ error: 'No such project.' }, 404)
+      if (!canWriteProject(p, me)) return c.json({ error: `You have read-only access to ${p.name}.` }, 403)
+      return null
+    }
+    const onScope = await check(scoped)
+    if (onScope) return onScope
+    if (!id) return null
+    const map = await mapOf(st)
+    return check(map[`${kind}:${id}`])
+  }
+
   /** Refuses a request scoped to a project this person cannot open. */
   async function guard(c: any) {
     const p = projectOf(c)
@@ -1085,6 +1323,9 @@ export function v2Routes(current: () => { workspace: Workspace; db: unknown } | 
     return value
   }
   async function whoUncached(c: any): Promise<Viewer> {
+    // Where the database keeps its own people, its answer is the one that counts.
+    const asked = await store().viewer?.()
+    if (asked) return asked
     const person = c.get?.('person') as { id: string; email: string } | undefined
     const people = await store().members()
     // A workspace with no admins yet (a fresh local folder) is run by whoever is at it.
@@ -1093,16 +1334,31 @@ export function v2Routes(current: () => { workspace: Workspace; db: unknown } | 
     if (!mine) return { id: null, admin: !admins.length || !person?.email }
     return { id: mine.id, admin: mine.role === 'admin' }
   }
-  /** The projects this person may open. */
+  /** The projects this person may open, and what they may do in each. */
   async function mine(c: any) {
     const [list, me] = await Promise.all([store().projects(), who(c)])
-    return { me, all: list, allowed: list.filter((p) => canOpenProject(p, me)) }
+    const allowed = list.filter((p) => canOpenProject(p, me))
+    return { me, all: list, allowed, roleOf: (id: string) => projectRole(list.find((p) => p.id === id) ?? ({ members: [] } as any), me) }
   }
+  /** What a project looks like to the person asking: their role, and the people in it when they run it. */
+  const seenBy = (p: Project, me: Viewer) => ({
+    id: p.id,
+    name: p.name,
+    color: p.color,
+    ...(p.archived ? { archived: true } : {}),
+    role: projectRole(p, me),
+    members: me.admin ? p.members : undefined,
+  })
 
   app.get('/projects', async (c) => {
     const st = store()
     const [set, { me, allowed }] = await Promise.all([st.settings(), mine(c)])
-    return c.json({ enabled: !!set.projects?.enabled, projects: allowed, canManage: me.admin })
+    return c.json({
+      enabled: !!set.projects?.enabled,
+      projects: allowed.map((p) => seenBy(p, me)),
+      canManage: me.admin,
+      me: me.id,
+    })
   })
   app.put('/projects', async (c) => {
     const st = store()
@@ -1115,14 +1371,10 @@ export function v2Routes(current: () => { workspace: Workspace; db: unknown } | 
       for (const x of b.projects) {
         const name = (x.name ?? '').trim().slice(0, 60)
         if (!name) return c.json({ error: 'Every project needs a name.' }, 400)
-        next.push({
-          id: x.id || randomUUID(),
-          name,
-          color: PROJECT_COLORS.includes(x.color ?? '') ? x.color! : 'slate',
-          access: x.access === 'members' ? 'members' : 'everyone',
-          members: x.access === 'members' ? (x.members ?? []).filter((m) => typeof m === 'string') : [],
-          ...(x.archived ? { archived: true } : {}),
-        })
+        const members = (x.members ?? [])
+          .filter((m: any) => m && typeof m.personId === 'string')
+          .map((m: any) => ({ personId: m.personId as string, role: (PROJECT_ROLES.includes(m.role) ? m.role : 'write') as ProjectRole }))
+        next.push({ id: x.id || randomUUID(), name, color: PROJECT_COLORS.includes(x.color ?? '') ? x.color! : 'slate', members, ...(x.archived ? { archived: true } : {}) })
       }
       // A deleted project lets go of its items; they stay, in no project.
       const gone = new Set(before.filter((p) => !next.some((n) => n.id === p.id)).map((p) => p.id))
@@ -1138,15 +1390,59 @@ export function v2Routes(current: () => { workspace: Workspace; db: unknown } | 
     if (b.enabled !== undefined) await st.saveSettings({ projects: { enabled: !!b.enabled } })
     whoCache.clear()
     const [set, after] = await Promise.all([st.settings(), mine(c)])
-    return c.json({ enabled: !!set.projects?.enabled, projects: after.allowed, canManage: after.me.admin })
+    return c.json({ enabled: !!set.projects?.enabled, projects: after.allowed.map((p) => seenBy(p, after.me)), canManage: after.me.admin, me: after.me.id })
   })
+  /* Joining: an admin makes a link, the person opens Alfredo and pastes it. */
+  app.get('/invites', async (c) => {
+    const { me } = await mine(c)
+    if (!me.admin) return c.json({ error: 'Only an admin can see the invitations.' }, 403)
+    return c.json(await store().invites())
+  })
+  app.post('/invites', async (c) => {
+    const st = store()
+    const { me, all } = await mine(c)
+    if (!me.admin) return c.json({ error: 'Only an admin can invite people.' }, 403)
+    const b = await c.req.json<{ email?: string; role?: string; projects?: { id: string; role: ProjectRole }[] }>()
+    const email = (b.email ?? '').trim().toLowerCase()
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return c.json({ error: 'Enter a valid email.' }, 400)
+    const projects = (b.projects ?? [])
+      .filter((p) => all.some((x) => x.id === p.id))
+      .map((p) => ({ id: p.id, role: (PROJECT_ROLES.includes(p.role) ? p.role : 'write') as ProjectRole }))
+    const { invite, token } = await st.createInvite({ email, role: b.role === 'admin' ? 'admin' : 'member', projects })
+    // The link carries where the workspace is and nothing secret: a Supabase
+    // project with its publishable key, or the Worker a teammate signs in to.
+    const cur = current()?.workspace
+    const name = (await st.settings()).name ?? cur?.name ?? 'Workspace'
+    const k = cur?.kind === 'remote' ? supabaseFor(cur.id) : null
+    const link = k
+      ? inviteLink({ kind: 'supabase', url: k.url, anonKey: k.anonKey, name, token })
+      : cur?.kind === 'cloudflare' && cur.cloudflare?.url
+        ? inviteLink({ kind: 'cloudflare', url: cur.cloudflare.url, name, token })
+        : null
+    return c.json({ invite, token, link })
+  })
+  app.delete('/invites/:id', async (c) => {
+    const { me } = await mine(c)
+    if (!me.admin) return c.json({ error: 'Only an admin can revoke an invitation.' }, 403)
+    await store().revokeInvite(c.req.param('id'))
+    return c.json({ ok: true })
+  })
+
   app.post('/projects/assign', async (c) => {
     const b = await c.req.json<{ kind: ItemKind; ids: string[]; project: string | null }>()
     if (!ITEM_KINDS.includes(b.kind) || !Array.isArray(b.ids)) return c.json({ error: 'Say what to move: kind and ids.' }, 400)
     const st = store()
-    const { allowed, all } = await mine(c)
-    if (b.project && !all.some((p) => p.id === b.project)) return c.json({ error: 'No such project.' }, 404)
-    if (b.project && !allowed.some((p) => p.id === b.project)) return c.json({ error: 'You do not have access to that project.' }, 403)
+    const { me, all } = await mine(c)
+    const target = b.project ? all.find((p) => p.id === b.project) : null
+    if (b.project && !target) return c.json({ error: 'No such project.' }, 404)
+    if (target && !canWriteProject(target, me)) return c.json({ error: `You have read-only access to ${target.name}.` }, 403)
+    // Taking something out of a project is a change to that project too.
+    const map = await mapOf(st)
+    for (const id of b.ids) {
+      const from = map[`${b.kind}:${id}`]
+      const fromP = from ? all.find((p) => p.id === from) : null
+      if (fromP && !canWriteProject(fromP, me)) return c.json({ error: `You have read-only access to ${fromP.name}.` }, 403)
+    }
     await st.assign(b.kind, b.ids, b.project ?? null)
     return c.json({ ok: true })
   })
@@ -1200,6 +1496,8 @@ export function v2Routes(current: () => { workspace: Workspace; db: unknown } | 
     const b = await c.req.json<{ start: string; to: 'next' | 'backlog' }>()
     const start = weekParam(b.start)
     if (!start || start === 'backlog') return c.json({ error: 'Pick a cycle.' }, 400)
+    const denied = await guardWrite(c, 'card')
+    if (denied) return denied
     const st = store()
     const view = await cycles()
     const m = cycleMath((await st.tally()).anchor ?? start, view.settings.length)
@@ -1219,16 +1517,22 @@ export function v2Routes(current: () => { workspace: Workspace; db: unknown } | 
     return c.json(await scoped(c, 'card', await st.cardsIn(m.weeksOf(m.startOf(start)))))
   })
   app.post('/cards', async (c) => {
+    const denied = await guardWrite(c, 'card')
+    if (denied) return denied
     const b = await c.req.json<{ title: string; status?: Status; week?: string }>()
     if (!b.title?.trim()) return c.json({ error: 'Give the card a title.' }, 400)
     return c.json(await placed(c, 'card', await store().createCard({ title: b.title.trim(), status: STATUSES.includes(b.status!) ? b.status : 'todo', week: weekParam(b.week) })))
   })
   app.patch('/cards/:id', async (c) => {
+    const denied = await guardWrite(c, 'card', c.req.param('id'))
+    if (denied) return denied
     const b = await c.req.json<Record<string, any>>()
     if (b.week !== undefined) b.week = weekParam(b.week) ?? 'backlog'
     return c.json(await one('card', await store().updateCard(c.req.param('id'), b)))
   })
   app.delete('/cards/:id', async (c) => {
+    const denied = await guardWrite(c, 'card', c.req.param('id'))
+    if (denied) return denied
     await store().deleteCard(c.req.param('id'))
     return c.json({ ok: true })
   })
@@ -1236,29 +1540,37 @@ export function v2Routes(current: () => { workspace: Workspace; db: unknown } | 
   app.get('/docs', async (c) => (await guard(c)) ?? c.json(await scoped(c, 'doc', await store().docs())))
   app.get('/docs/:id', async (c) => c.json(await one('doc', await store().doc(c.req.param('id')))))
   app.post('/docs', async (c) => {
+    const denied = await guardWrite(c, 'doc')
+    if (denied) return denied
     const b = await c.req.json<{ title?: string; body?: string }>()
     return c.json(await placed(c, 'doc', await store().createDoc(b.title?.trim() || 'Untitled', b.body ?? '')))
   })
-  app.put('/docs/:id', async (c) => c.json(await store().saveDoc(c.req.param('id'), await c.req.json())))
+  app.put('/docs/:id', async (c) => (await guardWrite(c, 'doc', c.req.param('id'))) ?? c.json(await store().saveDoc(c.req.param('id'), await c.req.json())))
 
   app.get('/canvases', async (c) => (await guard(c)) ?? c.json(await scoped(c, 'canvas', await store().canvases())))
   app.get('/canvases/:id', async (c) => c.json(await one('canvas', await store().canvas(c.req.param('id')))))
   app.post('/canvases', async (c) => {
+    const denied = await guardWrite(c, 'canvas')
+    if (denied) return denied
     const b = await c.req.json<{ title?: string }>()
     return c.json(await placed(c, 'canvas', await store().createCanvas(b.title?.trim() || 'Untitled canvas')))
   })
-  app.put('/canvases/:id', async (c) => c.json(await store().saveCanvas(c.req.param('id'), await c.req.json())))
+  app.put('/canvases/:id', async (c) => (await guardWrite(c, 'canvas', c.req.param('id'))) ?? c.json(await store().saveCanvas(c.req.param('id'), await c.req.json())))
 
   app.get('/meetings', async (c) => (await guard(c)) ?? c.json(await scoped(c, 'meeting', await store().meetings())))
   app.get('/meetings/:id', async (c) => c.json(await one('meeting', await store().meeting(c.req.param('id')))))
   app.post('/meetings', async (c) => {
+    const denied = await guardWrite(c, 'meeting')
+    if (denied) return denied
     const b = await c.req.json<{ title?: string; transcript?: string; notes?: string; startedAt?: string; durationS?: number }>()
     return c.json(await placed(c, 'meeting', await store().createMeeting({ ...b, title: b.title?.trim() || 'Meeting' })))
   })
-  app.put('/meetings/:id', async (c) => c.json(await store().saveMeeting(c.req.param('id'), await c.req.json())))
+  app.put('/meetings/:id', async (c) => (await guardWrite(c, 'meeting', c.req.param('id'))) ?? c.json(await store().saveMeeting(c.req.param('id'), await c.req.json())))
 
   for (const kind of ['docs', 'canvases', 'meetings'] as const) {
     app.delete(`/${kind}/:id`, async (c) => {
+      const denied = await guardWrite(c, kind === 'docs' ? 'doc' : kind === 'canvases' ? 'canvas' : 'meeting', c.req.param('id'))
+      if (denied) return denied
       await store().remove(kind, c.req.param('id'))
       return c.json({ ok: true })
     })

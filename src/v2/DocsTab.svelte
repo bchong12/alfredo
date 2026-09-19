@@ -3,6 +3,7 @@
   import ProjectChip from './ProjectChip.svelte'
   import ProjectPicker from './ProjectPicker.svelte'
   import { scope } from './project.svelte'
+  import { canEditHere } from './project.svelte'
   import Plus from '@lucide/svelte/icons/plus'
   import Search from '@lucide/svelte/icons/search'
   import FileText from '@lucide/svelte/icons/file-text'
@@ -168,7 +169,7 @@
 {:else}
   <div class="page">
     <Header crumbs={[tabName]}>
-      <button class="primary" onclick={create}><Plus size={12} /><span>New doc</span></button>
+      {#if canEditHere()}<button class="primary" onclick={create}><Plus size={12} /><span>New doc</span></button>{/if}
     </Header>
     <div class="scroll">
       <div class="home">

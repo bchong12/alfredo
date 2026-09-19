@@ -1,7 +1,7 @@
 <script lang="ts">
   // Settings for the current workspace (and a little for this app).
   import FolderTree from '@lucide/svelte/icons/folder-tree'
-  import { scope, PROJECT_COLORS_LIST as PROJECT_COLORS, type Project } from './project.svelte'
+  import { scope, PROJECT_COLORS_LIST as PROJECT_COLORS, type Project, type ProjectRole } from './project.svelte'
   import { setProject } from './state.svelte'
   import ConnectDatabase from './ConnectDatabase.svelte'
   import { PACK_TABS } from './packs'
@@ -26,6 +26,7 @@
   import Repeat from '@lucide/svelte/icons/repeat'
   import { drop } from './cache'
   import WorkspaceMark from './WorkspaceMark.svelte'
+  import { untrack } from 'svelte'
   import Face from './Face.svelte'
   import { v2, imageDataUrl, type Person, type Settings, type TabDef } from './api'
   import { ui, type SettingsPage } from './state.svelte'
@@ -70,18 +71,67 @@
     const name = newProject.trim()
     if (!name) return
     newProject = ''
-    saveProjects([...projects, { id: '', name, color: PROJECT_COLORS[projects.length % PROJECT_COLORS.length], access: 'everyone', members: [] }], true)
+    // Whoever makes it is in it; workspace admins are in every project anyway.
+    saveProjects([...projects, { id: '', name, color: PROJECT_COLORS[projects.length % PROJECT_COLORS.length], members: [] }], true)
   }
-  /** Who can open a project: everyone here, or the people an admin picks. */
-  function setAccess(i: number, access: 'everyone' | 'members') {
-    saveProjects(projects.map((x, k) => (k === i ? { ...x, access, members: access === 'members' ? (x.members ?? []) : [] } : x)))
-  }
-  function toggleMember(i: number, personId: string) {
+  /** Who is in a project, and what they may do there. */
+  const roleIn = (p: Project, personId: string) => (p.members ?? []).find((m) => m.personId === personId)?.role ?? null
+  function setRoleIn(i: number, personId: string, role: ProjectRole | null) {
     const cur = projects[i].members ?? []
-    const next = cur.includes(personId) ? cur.filter((m) => m !== personId) : [...cur, personId]
+    const next = role ? [...cur.filter((m) => m.personId !== personId), { personId, role }] : cur.filter((m) => m.personId !== personId)
     saveProjects(projects.map((x, k) => (k === i ? { ...x, members: next } : x)))
   }
+  const ROLE_LABEL: Record<ProjectRole, string> = { admin: 'Runs it', write: 'Can edit', read: 'Read only' }
   let openAccess = $state<string | null>(null)
+
+  // --- invitations ---------------------------------------------------------------
+  type Invite = { id: string; email: string; role: 'admin' | 'member'; projects: { id: string; role: ProjectRole }[]; createdAt: string; usedAt?: string | null }
+  let invites = $state<Invite[]>([])
+  let inviteProjects = $state<Record<string, ProjectRole>>({})
+  let madeLink = $state('')
+  let linkCopied = $state(false)
+  async function loadInvites() {
+    if (!scope.canManage) return
+    invites = await v2.get<Invite[]>('/invites').catch(() => [])
+  }
+  async function makeInvite() {
+    const email = inviteEmail.trim().toLowerCase()
+    if (!email) return
+    try {
+      const r = await v2.post<{ link: string | null; token: string }>('/invites', {
+        email,
+        role: inviteRole,
+        projects: Object.entries(inviteProjects).map(([id, role]) => ({ id, role })),
+      })
+      madeLink = r.link ?? ''
+      inviteEmail = ''
+      inviteProjects = {}
+      await loadInvites()
+      if (!r.link) flash('Invitation made. This workspace has no link to share; add them in Members.')
+    } catch (e) {
+      fail(e)
+    }
+  }
+  async function revokeInvite(id: string) {
+    try {
+      await v2.del(`/invites/${id}`)
+      await loadInvites()
+    } catch (e) {
+      fail(e)
+    }
+  }
+  const copyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(madeLink)
+      linkCopied = true
+      setTimeout(() => (linkCopied = false), 1500)
+    } catch {}
+  }
+
+  // The waiting invitations, whenever an admin looks at Members.
+  $effect(() => {
+    if (ui.settingsPage === 'members' && scope.canManage) untrack(() => loadInvites())
+  })
 
   let msg = $state('')
   const flash = (m: string) => {
@@ -185,7 +235,6 @@
   // --- members -------------------------------------------------------------------
   let inviteEmail = $state('')
   let inviteRole = $state<'member' | 'admin'>('member')
-  let inviteLink = $state('')
   async function refreshMembers() {
     ui.members = await v2.get<Person[]>('/members')
     if (ui.me) ui.me = ui.members.find((m) => m.id === ui.me!.id) ?? ui.me
@@ -199,17 +248,6 @@
       flash('Photo updated')
     } catch (err) {
       fail(err)
-    }
-  }
-  async function invite() {
-    try {
-      const r = await v2.post<{ link: string | null }>('/members/invite', { email: inviteEmail, role: inviteRole })
-      inviteLink = r.link ?? ''
-      inviteEmail = ''
-      await refreshMembers()
-      flash(r.link ? 'Invite created: send them the link' : 'Added')
-    } catch (e) {
-      fail(e)
     }
   }
   async function setRole(p: Person, role: string) {
@@ -370,28 +408,33 @@
                   />
                   {#if scope.canManage}
                     <button class="ghost" onclick={() => (openAccess = openAccess === p.id ? null : p.id)}>
-                      {(p.access ?? 'everyone') === 'everyone' ? 'Everyone' : `${(p.members ?? []).length} ${(p.members ?? []).length === 1 ? 'person' : 'people'}`}
+                      {(p.members ?? []).length} {(p.members ?? []).length === 1 ? 'person' : 'people'}
                     </button>
                     <button class="ghost" onclick={() => saveProjects(projects.filter((_, k) => k !== i))}>Remove</button>
                   {/if}
                 </div>
                 {#if scope.canManage && openAccess === p.id}
                   <div class="access">
-                    <div class="seg">
-                      <button class:on={(p.access ?? 'everyone') === 'everyone'} onclick={() => setAccess(i, 'everyone')}>Everyone here</button>
-                      <button class:on={p.access === 'members'} onclick={() => setAccess(i, 'members')}>Only chosen people</button>
+                    <p class="note">Only these people can open {p.name}. Workspace admins are in every project.</p>
+                    <div class="people">
+                      {#each ui.members as m (m.id)}
+                        {@const role = roleIn(p, m.id)}
+                        <div class="who">
+                          <Face person={m} size={20} />
+                          <span class="wname">{m.name}</span>
+                          {#if m.role === 'admin'}
+                            <span class="s">Workspace admin</span>
+                          {:else}
+                            <select class="field small" value={role ?? ''} onchange={(e) => setRoleIn(i, m.id, (e.currentTarget.value || null) as ProjectRole | null)}>
+                              <option value="">Not in it</option>
+                              <option value="read">Read only</option>
+                              <option value="write">Can edit</option>
+                              <option value="admin">Runs it</option>
+                            </select>
+                          {/if}
+                        </div>
+                      {/each}
                     </div>
-                    {#if p.access === 'members'}
-                      <div class="people">
-                        {#each ui.members as m (m.id)}
-                          <label class="who">
-                            <input type="checkbox" checked={(p.members ?? []).includes(m.id)} onchange={() => toggleMember(i, m.id)} />
-                            <span>{m.name}</span>
-                            {#if m.role === 'admin'}<span class="s">admin, always in</span>{/if}
-                          </label>
-                        {/each}
-                      </div>
-                    {/if}
                   </div>
                 {/if}
               </div>
@@ -486,13 +529,62 @@
             <div class="dbt"><span class="h">{ui.me.name}</span><span class="s">Your photo is saved in this workspace's database, so everyone here sees it.</span></div>
           </div>
         {/if}
-        <div class="invite">
-          <input class="field grow" placeholder="name@company.com" bind:value={inviteEmail} onkeydown={(e) => e.key === 'Enter' && invite()} />
-          <select class="field" bind:value={inviteRole}><option value="member">Member</option><option value="admin">Admin</option></select>
-          <button class="primary" onclick={invite}>Invite</button>
-        </div>
-        {#if inviteLink}
-          <div class="linkbox"><Link size={13} /><span class="mono">{inviteLink}</span><button class="ghost" onclick={() => navigator.clipboard.writeText(inviteLink)}>Copy</button></div>
+        {#if scope.canManage}
+          <section>
+            <div class="lab"><b>Invite someone</b><span>They get a link, open Alfredo, paste it and sign in with this email. What they can reach is decided here, and kept in this workspace's database.</span></div>
+            <div class="invite">
+              <input class="field grow" placeholder="name@company.com" bind:value={inviteEmail} onkeydown={(e) => e.key === 'Enter' && makeInvite()} />
+              <select class="field" bind:value={inviteRole}><option value="member">Member</option><option value="admin">Admin</option></select>
+              <button class="primary" onclick={makeInvite}>Make a link</button>
+            </div>
+            {#if scope.enabled && projects.length}
+              <div class="people">
+                {#each projects as p (p.id)}
+                  <div class="who">
+                    <i class="pdot {p.color}"></i>
+                    <span class="wname">{p.name}</span>
+                    <select
+                      class="field small"
+                      value={inviteProjects[p.id] ?? ''}
+                      onchange={(e) => {
+                        const v = e.currentTarget.value as ProjectRole | ''
+                        const next = { ...inviteProjects }
+                        if (v) next[p.id] = v
+                        else delete next[p.id]
+                        inviteProjects = next
+                      }}
+                    >
+                      <option value="">Not in it</option>
+                      <option value="read">Read only</option>
+                      <option value="write">Can edit</option>
+                      <option value="admin">Runs it</option>
+                    </select>
+                  </div>
+                {/each}
+              </div>
+            {/if}
+            {#if madeLink}
+              <div class="linkbox">
+                <Link size={13} />
+                <span class="mono">{madeLink}</span>
+                <button class="ghost" onclick={copyLink}>{linkCopied ? 'Copied' : 'Copy'}</button>
+              </div>
+              <p class="note">Send it however you like. It works once, for that email, and stops working in two weeks.</p>
+            {/if}
+          </section>
+          {#if invites.filter((i) => !i.usedAt).length}
+            <section>
+              <div class="lab"><b>Waiting to be accepted</b></div>
+              <div class="plist">
+                {#each invites.filter((i) => !i.usedAt) as i (i.id)}
+                  <div class="prow">
+                    <span class="dbt grow"><span class="h">{i.email}</span><span class="s">{i.role === 'admin' ? 'Admin' : 'Member'}{i.projects.length ? ` · ${i.projects.length} project${i.projects.length === 1 ? '' : 's'}` : ''}</span></span>
+                    <button class="ghost" onclick={() => revokeInvite(i.id)}>Revoke</button>
+                  </div>
+                {/each}
+              </div>
+            </section>
+          {/if}
         {/if}
         <div class="people">
           <div class="ph"><span class="grow">Person</span><span class="w110">Role</span></div>
@@ -504,7 +596,7 @@
               </label>
               <div class="dbt grow"><span class="h">{p.name}{p.id === ui.me?.id ? ' (you)' : ''}</span><span class="s">{p.email ?? ''}</span></div>
               <div class="w110">
-                {#if ws?.kind === 'cloudflare'}
+                {#if ws?.kind === 'cloudflare' || !scope.canManage}
                   <span class="role">{#if p.role === 'admin'}<Shield size={11} />{/if}{p.role === 'admin' ? 'Admin' : p.role === 'viewer' ? 'Viewer' : 'Member'}</span>
                 {:else}
                   <select class="role" value={p.role} onchange={(e) => setRole(p, e.currentTarget.value)}>
@@ -843,20 +935,29 @@
     gap: 8px;
     margin: 0 0 4px 108px;
   }
-  .people {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px 16px;
-  }
   .who {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
+    min-width: 220px;
     font-size: var(--fs-2);
     color: var(--ink-2);
   }
-  .who input {
-    accent-color: var(--ink);
+  .wname {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .small {
+    height: 28px;
+    font-size: var(--fs-2);
+  }
+  .people {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 20px;
   }
   .prow {
     display: flex;

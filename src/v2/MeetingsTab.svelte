@@ -2,6 +2,7 @@
   // Meetings: transcribed on this Mac by Parakeet. The audio is thrown away as
   // soon as the transcript exists; what stays is the transcript and the notes.
   import { scope } from './project.svelte'
+  import { canEditHere } from './project.svelte'
   import ProjectChip from './ProjectChip.svelte'
   import ProjectPicker from './ProjectPicker.svelte'
   import Cpu from '@lucide/svelte/icons/cpu'
@@ -225,7 +226,7 @@
 {:else}
   <div class="page">
     <Header crumbs={[tabName]}>
-      <button class="primary" disabled={engine?.parakeet === false} onclick={() => start()}><i class="dot"></i><span>Transcribe</span></button>
+      {#if canEditHere()}<button class="primary" disabled={engine?.parakeet === false} onclick={() => start()}><i class="dot"></i><span>Transcribe</span></button>{/if}
     </Header>
     <div class="scroll">
       <div class="home">

@@ -2,7 +2,7 @@
   // Canvas: whiteboards. Frames that hug their content, outlined objects,
   // right-angle arrows, tools along the bottom. Same JSON as React Flow, so a
   // board made elsewhere in that format opens here unchanged.
-  import { scope } from './project.svelte'
+  import { scope, canEditHere } from './project.svelte'
   import ProjectChip from './ProjectChip.svelte'
   import ProjectPicker from './ProjectPicker.svelte'
   import { SvelteFlow, Background, BackgroundVariant, type Node, type Edge, type Connection } from '@xyflow/svelte'
@@ -441,7 +441,7 @@
 {:else}
   <div class="page">
     <Header crumbs={[tabName]}>
-      <button class="primary" onclick={create}><Plus size={12} /><span>New canvas</span></button>
+      {#if canEditHere()}<button class="primary" onclick={create}><Plus size={12} /><span>New canvas</span></button>{/if}
     </Header>
     <div class="home">
       <h1>{tabName}</h1>

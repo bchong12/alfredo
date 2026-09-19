@@ -24,22 +24,24 @@
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="catch" onclick={() => (open = false)}></div>
     <div class="menu">
-      <button class="row" onclick={() => ((open = false), setProject(null))}>
-        <i class="dot all"></i><span class="grow">All projects</span>
-        {#if !scope.id}<Check size={13} />{/if}
-      </button>
       {#each liveProjects() as p (p.id)}
         <button class="row" onclick={() => ((open = false), setProject(p.id))}>
-          <i class="dot {p.color}"></i><span class="grow">{p.name}</span>
+          <i class="dot {p.color}"></i>
+          <span class="grow">{p.name}</span>
+          {#if p.role === 'read'}<span class="role">Read only</span>{/if}
           {#if scope.id === p.id}<Check size={13} />{/if}
         </button>
+      {:else}
+        <span class="none">{scope.canManage ? 'No projects yet.' : 'You are not in a project yet. An admin can add you.'}</span>
       {/each}
-      <div class="line"></div>
-      <button class="row" onclick={() => ((open = false), setProject(NO_PROJECT))}>
-        <CircleDashed size={13} /><span class="grow">No project</span>
-        {#if scope.id === NO_PROJECT}<Check size={13} />{/if}
-      </button>
-      <button class="row" onclick={() => ((open = false), openSettings('projects'))}><Plus size={13} /><span class="grow">New project</span></button>
+      {#if scope.canManage}
+        <div class="line"></div>
+        <button class="row" onclick={() => ((open = false), setProject(NO_PROJECT))}>
+          <CircleDashed size={13} /><span class="grow">Unfiled</span>
+          {#if scope.id === NO_PROJECT}<Check size={13} />{/if}
+        </button>
+        <button class="row" onclick={() => ((open = false), openSettings('projects'))}><Plus size={13} /><span class="grow">New project</span></button>
+      {/if}
     </div>
   {/if}
 </div>
@@ -119,6 +121,17 @@
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
+  }
+  .role {
+    font-size: var(--fs-1);
+    color: var(--muted);
+  }
+  .none {
+    display: block;
+    padding: 8px;
+    font-size: var(--fs-2);
+    color: var(--muted);
+    line-height: 1.45;
   }
   .line {
     height: 1px;

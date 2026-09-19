@@ -3,14 +3,17 @@
 //
 // null means "all projects": everything in the workspace, the way it is when
 // a workspace does not use projects at all.
+export type ProjectRole = 'admin' | 'write' | 'read'
+export type ProjectMember = { personId: string; role: ProjectRole }
 export type Project = {
   id: string
   name: string
   color: string
   archived?: boolean
-  /** Everyone in the workspace, or only the people listed. Admins always get in. */
-  access?: 'everyone' | 'members'
-  members?: string[]
+  /** What you may do in it. Null never reaches the app: you only get yours. */
+  role?: ProjectRole | null
+  /** Who is in it. Only admins are told. */
+  members?: ProjectMember[]
 }
 
 /** The colours a project can take. Same list the server accepts. */
@@ -22,14 +25,24 @@ export const scope = $state({
   list: [] as Project[],
   /** Whether this person may add projects and decide who is in them. */
   canManage: false,
+  /** This person's id in the workspace, for reading the member lists. */
+  meId: null as string | null,
   /** A project id, 'none' for work in no project, or null for all of it. */
   id: null as string | null,
 })
 
+/** The work that is in no project. Only admins are offered it, to file old work. */
 export const NO_PROJECT = 'none'
 export const activeProject = () => scope.list.find((p) => p.id === scope.id) ?? null
 /** What the switcher says right now. */
-export const projectLabel = () => (scope.id === NO_PROJECT ? 'No project' : (activeProject()?.name ?? 'All projects'))
+export const projectLabel = () => (scope.id === NO_PROJECT ? 'Unfiled' : (activeProject()?.name ?? 'Pick a project'))
+/** What you may do where you are: a project's role, or the workspace's when nothing is open. */
+export const myRole = (): ProjectRole => {
+  if (!scope.enabled) return 'write'
+  if (scope.id === NO_PROJECT) return scope.canManage ? 'admin' : 'read'
+  return activeProject()?.role ?? (scope.canManage ? 'admin' : 'read')
+}
+export const canEditHere = () => myRole() !== 'read'
 export const liveProjects = () => scope.list.filter((p) => !p.archived)
 
 const KEY = (ws: string) => `alfredo.v2.project.${ws}`
@@ -43,8 +56,9 @@ export function rememberProject(ws: string) {
 export function recallProject(ws: string) {
   try {
     const want = localStorage.getItem(KEY(ws))
-    const known = want === NO_PROJECT || scope.list.some((p) => p.id === want && !p.archived)
-    scope.id = want && want !== 'all' && known ? want : null
+    const known = (want === NO_PROJECT && scope.canManage) || scope.list.some((p) => p.id === want && !p.archived)
+    // With projects on there is no view across all of them: open one.
+    scope.id = want && known ? want : (liveProjects()[0]?.id ?? (scope.canManage ? NO_PROJECT : null))
   } catch {
     scope.id = null
   }

@@ -342,17 +342,77 @@ create table if not exists pack_data (
 );
 
 -- Projects: an optional split of one workspace into separate boards, docs,
--- canvases and meetings. The project list lives in workspace_settings
--- ('projects'); this table says which project each item belongs to, so the
--- items themselves never change shape.
+-- canvases and meetings. Who is in a project, and what they may do there, is
+-- the point of the split, so both are tables rather than settings JSON.
+create table if not exists projects (
+  id          uuid primary key default gen_random_uuid(),
+  name        text not null,
+  color       text not null default 'slate',
+  position    double precision not null default 0,
+  archived_at timestamptz,
+  created_at  timestamptz not null default now()
+);
+
+-- A person's place in a project. Workspace admins are in every project
+-- without a row here; everyone else needs one.
+create table if not exists project_members (
+  project_id uuid not null references projects(id) on delete cascade,
+  person_id  uuid not null references people(id) on delete cascade,
+  role       text not null default 'write' check (role in ('admin','write','read')),
+  created_at timestamptz not null default now(),
+  primary key (project_id, person_id)
+);
+create index if not exists project_members_person on project_members (person_id);
+
+-- Which project each item belongs to. The items themselves never change shape.
 create table if not exists project_items (
   kind       text not null check (kind in ('card','doc','canvas','meeting')),
   item_id    text not null,
-  project_id text not null,
+  project_id uuid not null references projects(id) on delete cascade,
   created_at timestamptz not null default now(),
   primary key (kind, item_id)
 );
 create index if not exists project_items_project on project_items (project_id);
+
+-- project_items arrived before projects had a table of their own, so an early
+-- install has its project_id as text. The ids were always uuids.
+do $$
+begin
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'project_items' and column_name = 'project_id' and data_type <> 'uuid'
+  ) then
+    delete from project_items where project_id !~ '^[0-9a-f-]{36}$';
+    alter table project_items alter column project_id type uuid using project_id::uuid;
+  end if;
+  if not exists (
+    select 1 from information_schema.table_constraints
+    where table_schema = 'public' and table_name = 'project_items' and constraint_type = 'FOREIGN KEY'
+  ) then
+    delete from project_items pi where not exists (select 1 from projects p where p.id = pi.project_id);
+    alter table project_items add constraint project_items_project_fk foreign key (project_id) references projects(id) on delete cascade;
+  end if;
+end $$;
+
+-- Joining a workspace: an admin makes an invite, the link carries the token,
+-- and accepting it creates the account and the memberships in one go. Only
+-- the hash is kept, so a leaked database does not hand out invitations.
+create table if not exists invites (
+  id         uuid primary key default gen_random_uuid(),
+  token_hash text unique not null,
+  email      text not null,
+  role       text not null default 'member' check (role in ('admin','member')),
+  projects   jsonb not null default '[]'::jsonb,
+  created_by uuid,
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null default now() + interval '14 days',
+  used_at    timestamptz
+);
+create index if not exists invites_email on invites (lower(email));
+
+-- The sign-in behind a person, so the database can tell who is asking.
+alter table people add column if not exists user_id uuid;
+create index if not exists people_user on people (user_id);
 
 -- Row-level security on, no policies. Every server talks to the database with
 -- the service key (which bypasses RLS); the publishable key in the browser is
@@ -362,7 +422,7 @@ do $$
 declare t text;
 begin
   foreach t in array array['meetings','transcripts','transcript_parts','summaries','folders','user_keys',
-    'people','weeks','columns','cards','docs','roadmap_items','roadmap_cards','canvases','workspace_settings','pack_data','project_items'] loop
+    'people','weeks','columns','cards','docs','roadmap_items','roadmap_cards','canvases','workspace_settings','pack_data','projects','project_members','project_items','invites'] loop
     execute format('alter table %I enable row level security', t);
   end loop;
 end $$;

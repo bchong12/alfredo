@@ -15,6 +15,8 @@ export type Workspace = {
   name: string
   kind: 'local' | 'remote' | 'cloudflare'
   cloudflare?: { url: string } | null
+  /** A membership holds only the publishable key: the database decides what it shows. */
+  supabase?: { url: string; mode?: 'owner' | 'member' } | null
   repos: string[]
   prefix?: string
   canvas?: { baseUrl: string; connected: boolean } | null
@@ -24,6 +26,26 @@ export type Workspace = {
 }
 
 const KEY = 'alfred.workspace'
+/** An invitation waiting to be spent, once the person signs in. */
+const INVITE = (ws: string) => `alfredo.invite.${ws}`
+
+export function rememberInvite(ws: string, token: string) {
+  try {
+    localStorage.setItem(INVITE(ws), token)
+  } catch {}
+}
+export function pendingInvite(ws: string) {
+  try {
+    return localStorage.getItem(INVITE(ws))
+  } catch {
+    return null
+  }
+}
+export function clearInvite(ws: string) {
+  try {
+    localStorage.removeItem(INVITE(ws))
+  } catch {}
+}
 
 export const workspace = $state({
   list: [] as Workspace[],

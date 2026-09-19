@@ -87,6 +87,57 @@ export function apiHeaders(): Record<string, string> {
   }
 }
 
+/** Make an account in this workspace's project, for someone holding an invite. */
+export async function signUp(email: string, password: string) {
+  auth.error = ''
+  const c = await getClient()
+  const { data, error } = await c.auth.signUp({ email, password })
+  if (error) {
+    auth.error = error.message
+    return false
+  }
+  if (!data.session) {
+    auth.error = 'Check your email to confirm the address, then sign in.'
+    return false
+  }
+  auth.session = data.session
+  return true
+}
+
+/** Sign in with Google, through the browser. The server holds the answer. */
+export async function signInWithGoogle(workspaceId: string) {
+  auth.error = ''
+  try {
+    const { state } = await post<{ state: string }>(`/api/workspaces/${workspaceId}/google`, {})
+    for (let i = 0; i < 300; i++) {
+      await new Promise((r) => setTimeout(r, 1000))
+      const r = await api<{ status: string; error?: string; session?: { access_token: string; refresh_token: string } }>(
+        `/api/workspaces/${workspaceId}/google/${state}`,
+      )
+      if (r.status === 'failed') {
+        auth.error = r.error ?? 'Google did not sign you in.'
+        return false
+      }
+      if (r.status === 'done' && r.session) {
+        const c = await getClient()
+        const { data, error } = await c.auth.setSession(r.session)
+        if (error) {
+          auth.error = error.message
+          return false
+        }
+        auth.session = data.session
+        return true
+      }
+      if (r.status === 'unknown') return false
+    }
+    auth.error = 'That took too long. Try again.'
+    return false
+  } catch (e) {
+    auth.error = (e as Error).message
+    return false
+  }
+}
+
 export async function signIn(email: string, password: string) {
   auth.error = ''
   const c = await getClient()

@@ -6,6 +6,8 @@ import { createClient } from '@supabase/supabase-js'
 import * as ws from './workspaces'
 import { CloudflareWorkspace } from './cloudflare-workspace'
 import { applySchema, checkAnonKey, listProjects, missingTables, projectKeys, refOf, schemaSql, type SupabaseProject } from './supabase-connect'
+import { hashToken } from './v2'
+import { readInviteLink } from './invite-link'
 
 export type SupabaseConnect = {
   name: string
@@ -65,6 +67,7 @@ export async function connectSupabase(o: SupabaseConnect): Promise<Connected> {
 export async function setupSupabaseSchema(id: string, accessToken?: string): Promise<{ schema: 'applied' | 'ready' | 'missing'; missing?: string[]; sql?: string }> {
   const keys = ws.supabaseFor(id)
   if (!keys) throw new Error('That workspace is not connected to Supabase.')
+  if (!keys.serviceKey) throw new Error('Only the person who set this workspace up can change its tables.')
   const ref = refOf(keys.url)!
   if (accessToken) {
     await applySchema(accessToken.trim(), ref)
@@ -101,6 +104,7 @@ export async function createAccount(id: string, a: { email: string; password: st
   const email = a.email.trim().toLowerCase()
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('Enter a valid email.')
   if ((a.password ?? '').length < 8) throw new Error('Use a password of at least 8 characters.')
+  if (!k.serviceKey) throw new Error('This workspace is a membership: accounts are made by signing up, not here.')
   const admin = createClient(k.url, k.serviceKey, { auth: { persistSession: false, autoRefreshToken: false } })
 
   const { data: users, error: listErr } = await admin.auth.admin.listUsers({ page: 1, perPage: 1 })
@@ -120,4 +124,55 @@ export async function createAccount(id: string, a: { email: string; password: st
     await admin.from('people').insert({ name, email, role: 'admin', position: 0 })
   }
   return { ok: true, admin: first || person?.role === 'admin' }
+}
+
+
+// --- invitations ---------------------------------------------------------------
+
+/** What a link opens, so the app knows what to ask for before using it. */
+export function inspectInvite(link: string) {
+  const i = readInviteLink(link)
+  return { kind: i.kind, name: i.name, url: i.url }
+}
+
+/**
+ * Register the workspace an invite link points at.
+ *
+ * A Supabase workspace connects with the publishable key and the person signs
+ * in next. A Cloudflare one has its own sign-in: the Worker takes the
+ * invitation and a password, and hands back the session this Mac keeps.
+ */
+export async function joinWithLink(link: string, o: { name?: string; password?: string } = {}) {
+  const i = readInviteLink(link)
+  if (i.kind === 'cloudflare') {
+    if (!o.password || o.password.length < 8) throw new Error('Choose a password of at least 8 characters.')
+    const r = await fetch(`${i.url}/api/workspace/auth/join`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ invite: i.token, name: o.name, password: o.password }),
+    })
+    const data = (await r.json().catch(() => null)) as { token?: string; error?: string } | null
+    if (!r.ok || !data?.token) throw new Error(data?.error ?? `That Worker answered ${r.status}.`)
+    // Someone may already hold this workspace another way (its owner, say);
+    // a membership is its own connection rather than a replacement.
+    const w = ws.createCloudflare({ name: i.name, url: i.url, token: data.token })
+    return { workspace: ws.publicView(w), token: null, signedIn: true }
+  }
+  const have = ws.list().find((w) => w.kind === 'remote' && w.supabase?.url === i.url)
+  const w = have ?? ws.createSupabase({ name: i.name, url: i.url, anonKey: i.anonKey! })
+  return { workspace: ws.publicView(w), token: i.token, signedIn: false }
+}
+
+/** Spend the invitation as the person who just signed in. */
+export async function claimInvite(id: string, o: { token: string; name?: string; session: string }) {
+  const k = ws.supabaseFor(id)
+  if (!k) throw new Error('That workspace is not connected to Supabase.')
+  if (!o.session) throw new Error('Sign in first.')
+  const as = createClient(k.url, k.anonKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${o.session}` } },
+  })
+  const { data, error } = await as.rpc('alfredo_join', { token_hash: hashToken(o.token), display_name: o.name ?? null })
+  if (error) throw new Error(error.message.replace(/^.*?:\s*/, ''))
+  return { person: data }
 }

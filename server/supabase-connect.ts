@@ -13,11 +13,13 @@ import { createClient } from '@supabase/supabase-js'
 
 const API = 'https://api.supabase.com/v1'
 const SCHEMA = fileURLToPath(new URL('../db/schema.sql', import.meta.url))
+const POLICIES = fileURLToPath(new URL('../db/policies.sql', import.meta.url))
 
 export type SupabaseProject = { ref: string; name: string; region: string; status: string }
 export type SupabaseKeys = { url: string; anonKey: string; serviceKey: string }
 
-export const schemaSql = () => readFileSync(SCHEMA, 'utf8')
+/** Everything a Supabase project needs: the tables, then who may see what. */
+export const schemaSql = () => `${readFileSync(SCHEMA, 'utf8')}\n\n${readFileSync(POLICIES, 'utf8')}`
 
 /** The tables a workspace needs; if these answer, the schema is in. */
 const PROBE = ['workspace_settings', 'pack_data', 'cards', 'docs', 'canvases', 'meetings', 'people', 'weeks']
@@ -59,8 +61,10 @@ export async function applySchema(token: string, ref: string) {
 }
 
 /** Which of the workspace tables the project is missing (empty when set up). Throws on a wrong key. */
-export async function missingTables(k: { url: string; serviceKey: string }): Promise<string[]> {
-  const c = createClient(k.url, k.serviceKey, { auth: { persistSession: false, autoRefreshToken: false } })
+export async function missingTables(k: { url: string; serviceKey?: string | null; anonKey?: string }): Promise<string[]> {
+  const key = k.serviceKey ?? k.anonKey
+  if (!key) throw new Error('No key to check this project with.')
+  const c = createClient(k.url, key, { auth: { persistSession: false, autoRefreshToken: false } })
   const missing: string[] = []
   for (const t of PROBE) {
     const { error, status } = await c.from(t).select('*', { head: true, count: 'exact' }).limit(1)

@@ -1,15 +1,23 @@
 // Alfredo on Cloudflare: a workspace database in your own account.
 //
-// D1 has no client auth of its own, so this Worker is the only door to it.
-// Alfredo (the desktop app, and through it the MCP) calls it with the
-// ALFREDO_TOKEN secret; nobody else gets in. The API is the one Alfredo's
-// Cloudflare store speaks:
-//   GET  /api/workspace/session              who the token is
-//   GET  /api/workspace/members              people   POST /invites adds one
-//   GET  /api/workspace/items                docs, boards (canvases), meetings
-//   POST /api/workspace/items                GET|PUT|DELETE /items/:id, GET|PUT /items/:id/board
-//   GET  /api/workspace/tasks                board cards (todo|progress|review|done)
-//   POST /api/workspace/tasks                PUT|DELETE /tasks/:id
+// D1 has no client auth of its own, so this Worker is the only door to it,
+// and the door is where access is decided. Two kinds of caller get in:
+//
+//   the owner  ALFREDO_TOKEN, the secret set when the workspace was created.
+//              Whoever holds it runs the workspace.
+//   a person   a session from /auth/login or /auth/join, held in their Mac's
+//              keychain. What they may read and write is decided here, from
+//              the projects they are in: read, write, or not at all.
+//
+// The API Alfredo speaks:
+//   GET  /api/workspace/session                  who this caller is
+//   POST /api/workspace/auth/login               email and password -> a session
+//   POST /api/workspace/auth/join                an invite -> an account and a session
+//   GET  /api/workspace/members                  people      POST /invites makes a link
+//   GET  /api/workspace/projects                 PUT /projects (admin), POST /projects/assign
+//   GET  /api/workspace/items                    docs, boards (canvases), meetings
+//   GET  /api/workspace/tasks                    board cards
+//
 // Deploy it from Alfredo (Settings > Database > Create on Cloudflare) or by hand:
 //   wrangler d1 create alfredo && wrangler d1 execute alfredo --remote --file schema.sql
 //   wrangler deploy && wrangler secret put ALFREDO_TOKEN
@@ -22,16 +30,32 @@ const fail = (message, status = 400) => {
 }
 const text = (v, max = 200) => (typeof v === 'string' ? v.trim().slice(0, max) : '')
 const rows = async (st) => (await st.all()).results
+const hex = (buf) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('')
+const token = () => hex(crypto.getRandomValues(new Uint8Array(32)))
+const sha = async (v) => hex(await crypto.subtle.digest('SHA-256', enc.encode(v)))
 const STATUSES = ['todo', 'progress', 'review', 'done']
 const TYPES = ['document', 'board', 'meeting']
+const KIND_OF = { document: 'doc', board: 'canvas', meeting: 'meeting' }
+const ROLES = ['admin', 'write', 'read']
 
+/** Same digest either way, so a wrong token takes as long as a right one. */
 async function same(a, b) {
-  // Compare digests so the check takes the same time whatever the input.
-  const [x, y] = await Promise.all([crypto.subtle.digest('SHA-256', enc.encode(a)), crypto.subtle.digest('SHA-256', enc.encode(b))])
-  const u = new Uint8Array(x), v = new Uint8Array(y)
+  const [x, y] = await Promise.all([sha(a), sha(b)])
   let diff = 0
-  for (let i = 0; i < u.length; i++) diff |= u[i] ^ v[i]
+  for (let i = 0; i < x.length; i++) diff |= x.charCodeAt(i) ^ y.charCodeAt(i)
   return diff === 0
+}
+
+/** PBKDF2, so a stolen database is not a list of passwords. */
+async function passwordHash(password, salt = token()) {
+  const key = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveBits'])
+  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: enc.encode(salt), iterations: 100000 }, key, 256)
+  return `${salt}:${hex(bits)}`
+}
+const passwordMatches = async (password, stored) => {
+  if (!stored) return false
+  const [salt] = stored.split(':')
+  return same(await passwordHash(password, salt), stored)
 }
 
 async function body(req) {
@@ -44,60 +68,245 @@ async function body(req) {
   }
 }
 
-async function findItem(env, id) {
-  const row = await env.DB.prepare('SELECT * FROM ws_items WHERE id=? AND archived=0').bind(id).first()
-  if (!row) fail('Not found.', 404)
-  return { ...row, content: JSON.parse(row.content) }
+// --- who is asking -----------------------------------------------------------
+
+const OWNER = { id: 'owner', email: '', name: 'Owner', role: 'admin', owner: true }
+
+async function caller(req, env) {
+  const bearer = req.headers.get('authorization')?.replace(/^Bearer /, '') ?? ''
+  if (!bearer) return null
+  if (env.ALFREDO_TOKEN?.length >= 32 && (await same(bearer, env.ALFREDO_TOKEN))) {
+    return { ...OWNER, email: env.OWNER_EMAIL || '', name: env.OWNER_NAME || 'Owner' }
+  }
+  const row = await env.DB.prepare(
+    'SELECT u.id, u.email, u.name, u.role FROM ws_sessions s JOIN ws_users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires_at > ?',
+  )
+    .bind(await sha(bearer), Date.now())
+    .first()
+  return row ? { ...row, owner: false } : null
 }
+
+const isAdmin = (who) => who.owner || who.role === 'admin'
+
+/** The projects this caller may open, and what they may do in each. */
+async function roles(env, who) {
+  const projects = await rows(env.DB.prepare('SELECT * FROM ws_projects WHERE archived = 0 ORDER BY position'))
+  if (isAdmin(who)) return new Map(projects.map((p) => [p.id, 'admin']))
+  const mine = await rows(env.DB.prepare('SELECT project_id, role FROM ws_project_members WHERE user_id = ?').bind(who.id))
+  return new Map(mine.filter((m) => projects.some((p) => p.id === m.project_id)).map((m) => [m.project_id, m.role]))
+}
+
+/** Where each item lives: "kind:id" -> project id. */
+async function itemProjects(env) {
+  const map = new Map()
+  for (const r of await rows(env.DB.prepare('SELECT kind, item_id, project_id FROM ws_project_items'))) map.set(`${r.kind}:${r.item_id}`, r.project_id)
+  return map
+}
+
+const mayRead = (mine, project) => !project || mine.has(project)
+const mayWrite = (mine, project) => !project || ['admin', 'write'].includes(mine.get(project))
+
+async function makeSession(env, userId) {
+  const raw = token()
+  await env.DB.prepare('INSERT INTO ws_sessions(token_hash, user_id, expires_at) VALUES(?,?,?)')
+    .bind(await sha(raw), userId, Date.now() + 30 * 86400000)
+    .run()
+  return raw
+}
+
+// --- the API -----------------------------------------------------------------
 
 async function api(req, env) {
   const url = new URL(req.url)
   const path = url.pathname.replace(/^\/api\/workspace/, '')
   const method = req.method
-  const bearer = req.headers.get('authorization')?.replace(/^Bearer /, '') ?? ''
-  const ok = env.ALFREDO_TOKEN?.length >= 32 && (await same(bearer, env.ALFREDO_TOKEN))
-  const owner = { id: 'owner', email: env.OWNER_EMAIL || 'owner@alfredo.local', name: env.OWNER_NAME || 'Owner', role: 'owner' }
+  const scope = req.headers.get('x-project') || url.searchParams.get('project') || ''
+  const project = scope && scope !== 'all' ? scope : ''
 
-  if (path === '/session') return json({ user: ok ? owner : null, storage: 'cloudflare' })
-  if (!ok) fail('Not signed in.', 401)
+  // Joining and signing in are the two doors that need no session yet.
+  if (path === '/auth/login' && method === 'POST') {
+    const b = await body(req)
+    const user = await env.DB.prepare('SELECT * FROM ws_users WHERE lower(email) = lower(?)').bind(text(b.email)).first()
+    if (!user || !(await passwordMatches(String(b.password ?? ''), user.password_hash))) fail('Email or password is incorrect.', 401)
+    return json({ token: await makeSession(env, user.id), user: { id: user.id, email: user.email, name: user.name, role: user.role } })
+  }
+  if (path === '/auth/join' && method === 'POST') {
+    const b = await body(req)
+    const hash = await sha(String(b.invite ?? ''))
+    const inv = await env.DB.prepare('SELECT * FROM ws_invites WHERE token_hash = ?').bind(hash).first()
+    if (!inv || inv.used_at || inv.expires_at < Date.now()) fail('This invitation is no longer good. Ask for a new one.', 403)
+    const password = String(b.password ?? '')
+    if (password.length < 8) fail('Use a password of at least 8 characters.')
+    const email = inv.email.toLowerCase()
+    const name = text(b.name, 100) || email.split('@')[0]
+    const have = await env.DB.prepare('SELECT * FROM ws_users WHERE lower(email) = lower(?)').bind(email).first()
+    const id = have?.id ?? crypto.randomUUID()
+    const hashed = await passwordHash(password)
+    if (have) await env.DB.prepare('UPDATE ws_users SET name = ?, role = ?, password_hash = ? WHERE id = ?').bind(name, inv.role, hashed, id).run()
+    else await env.DB.prepare('INSERT INTO ws_users(id,email,name,role,password_hash,created_at) VALUES(?,?,?,?,?,?)').bind(id, email, name, inv.role, hashed, now()).run()
+    for (const p of JSON.parse(inv.projects || '[]')) {
+      await env.DB.prepare('INSERT INTO ws_project_members(project_id,user_id,role) VALUES(?,?,?) ON CONFLICT(project_id,user_id) DO UPDATE SET role = excluded.role')
+        .bind(p.id, id, ROLES.includes(p.role) ? p.role : 'write')
+        .run()
+    }
+    await env.DB.prepare('UPDATE ws_invites SET used_at = ? WHERE id = ?').bind(now(), inv.id).run()
+    return json({ token: await makeSession(env, id), user: { id, email, name, role: inv.role } })
+  }
 
+  const who = await caller(req, env)
+  if (path === '/session') return json({ user: who ? { id: who.id, email: who.email, name: who.name, role: who.role } : null, storage: 'cloudflare' })
+  if (!who) fail('Not signed in.', 401)
+
+  const mine = await roles(env, who)
+  const where = await itemProjects(env)
+  if (project && !mine.has(project)) fail('You do not have access to that project.', 403)
+
+  // --- people and invitations
   if (path === '/members' && method === 'GET') {
-    const people = await rows(env.DB.prepare('SELECT id,email,name,role FROM ws_users ORDER BY name'))
-    if (!people.some((p) => p.email === owner.email)) people.unshift(owner)
+    const people = await rows(env.DB.prepare('SELECT id, email, name, role FROM ws_users ORDER BY name'))
+    if (who.owner && !people.some((p) => p.id === 'owner')) people.unshift({ id: 'owner', email: who.email, name: who.name, role: 'admin' })
     return json(people)
   }
+  if (path === '/invites' && method === 'GET') {
+    if (!isAdmin(who)) fail('Only an admin can see the invitations.', 403)
+    const list = await rows(env.DB.prepare('SELECT id, email, role, projects, expires_at, used_at FROM ws_invites ORDER BY rowid DESC'))
+    return json(list.map((i) => ({ ...i, projects: JSON.parse(i.projects || '[]') })))
+  }
   if (path === '/invites' && method === 'POST') {
+    if (!isAdmin(who)) fail('Only an admin can invite people.', 403)
     const b = await body(req)
     const email = text(b.email).toLowerCase()
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) fail('Enter a valid email.')
-    const name = email.split('@')[0].replace(/[._-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
-    await env.DB.prepare('INSERT INTO ws_users(id,email,name,role,created_at) VALUES(?,?,?,?,?) ON CONFLICT(email) DO UPDATE SET role=excluded.role')
-      .bind(crypto.randomUUID(), email, name, b.role === 'viewer' ? 'viewer' : 'editor', now())
+    const projects = (Array.isArray(b.projects) ? b.projects : []).filter((p) => p && typeof p.id === 'string')
+    const raw = token()
+    const id = crypto.randomUUID()
+    await env.DB.prepare('INSERT INTO ws_invites(id,token_hash,email,role,projects,expires_at) VALUES(?,?,?,?,?,?)')
+      .bind(id, await sha(raw), email, b.role === 'admin' ? 'admin' : 'member', JSON.stringify(projects), Date.now() + 14 * 86400000)
       .run()
-    // People reach this workspace through Alfredo, so there is no sign-up link to send.
-    return json({ token: null, email }, 201)
+    return json({ token: raw, invite: { id, email, role: b.role === 'admin' ? 'admin' : 'member', projects, usedAt: null } }, 201)
+  }
+  const invite = path.match(/^\/invites\/([^/]+)$/)
+  if (invite && method === 'DELETE') {
+    if (!isAdmin(who)) fail('Only an admin can revoke an invitation.', 403)
+    await env.DB.prepare('DELETE FROM ws_invites WHERE id = ?').bind(invite[1]).run()
+    return json({ ok: true })
+  }
+  const member = path.match(/^\/members\/([^/]+)$/)
+  if (member && method === 'PATCH') {
+    if (!isAdmin(who)) fail('Only an admin can change what someone may do.', 403)
+    const b = await body(req)
+    if (b.role) await env.DB.prepare('UPDATE ws_users SET role = ? WHERE id = ?').bind(b.role === 'admin' ? 'admin' : 'member', member[1]).run()
+    return json({ ok: true })
   }
 
-  if (path === '/items' && method === 'GET')
-    return json(await rows(env.DB.prepare('SELECT id,type,title,icon,revision,created_by,created_at,updated_at FROM ws_items WHERE archived=0 ORDER BY updated_at DESC')))
+  // --- projects
+  if (path === '/projects' && method === 'GET') {
+    const all = await rows(env.DB.prepare('SELECT * FROM ws_projects ORDER BY position'))
+    const members = await rows(env.DB.prepare('SELECT project_id, user_id, role FROM ws_project_members'))
+    const seen = all
+      .filter((p) => mine.has(p.id))
+      .map((p) => ({
+        id: p.id,
+        name: p.name,
+        color: p.color,
+        ...(p.archived ? { archived: true } : {}),
+        role: mine.get(p.id),
+        members: isAdmin(who) ? members.filter((m) => m.project_id === p.id).map((m) => ({ personId: m.user_id, role: m.role })) : undefined,
+      }))
+    return json({ projects: seen, canManage: isAdmin(who), me: who.id })
+  }
+  if (path === '/project-items' && method === 'GET') {
+    const all = await rows(env.DB.prepare('SELECT kind, item_id, project_id FROM ws_project_items'))
+    return json(Object.fromEntries(all.filter((r) => mine.has(r.project_id)).map((r) => [`${r.kind}:${r.item_id}`, r.project_id])))
+  }
+  if (path === '/projects' && method === 'PUT') {
+    if (!isAdmin(who)) fail('Only an admin can change the projects here.', 403)
+    const b = await body(req)
+    const list = Array.isArray(b.projects) ? b.projects : []
+    const before = await rows(env.DB.prepare('SELECT id FROM ws_projects'))
+    for (const p of before) if (!list.some((x) => x.id === p.id)) await env.DB.prepare('DELETE FROM ws_projects WHERE id = ?').bind(p.id).run()
+    for (const [i, p] of list.entries()) {
+      const id = p.id || crypto.randomUUID()
+      await env.DB.prepare(
+        'INSERT INTO ws_projects(id,name,color,position,archived,created_at) VALUES(?,?,?,?,?,?) ' +
+          'ON CONFLICT(id) DO UPDATE SET name = excluded.name, color = excluded.color, position = excluded.position, archived = excluded.archived',
+      )
+        .bind(id, text(p.name, 60) || 'Project', text(p.color, 20) || 'slate', i, p.archived ? 1 : 0, now())
+        .run()
+      await env.DB.prepare('DELETE FROM ws_project_members WHERE project_id = ?').bind(id).run()
+      for (const m of p.members ?? []) {
+        if (!m?.personId) continue
+        await env.DB.prepare('INSERT INTO ws_project_members(project_id,user_id,role) VALUES(?,?,?)')
+          .bind(id, m.personId, ROLES.includes(m.role) ? m.role : 'write')
+          .run()
+      }
+    }
+    return json({ ok: true })
+  }
+  if (path === '/projects/assign' && method === 'POST') {
+    const b = await body(req)
+    const ids = Array.isArray(b.ids) ? b.ids : []
+    const to = b.project || null
+    if (to && !mayWrite(mine, to)) fail('You cannot put things into that project.', 403)
+    for (const id of ids) {
+      const from = where.get(`${b.kind}:${id}`)
+      if (from && !mayWrite(mine, from)) fail('You have read-only access to what you are moving.', 403)
+      await env.DB.prepare('DELETE FROM ws_project_items WHERE kind = ? AND item_id = ?').bind(b.kind, id).run()
+      if (to) await env.DB.prepare('INSERT INTO ws_project_items(kind,item_id,project_id) VALUES(?,?,?)').bind(b.kind, id, to).run()
+    }
+    return json({ ok: true })
+  }
+
+  // --- documents, boards and meetings
+  const place = async (kind, id) => {
+    if (!project) return
+    await env.DB.prepare('INSERT INTO ws_project_items(kind,item_id,project_id) VALUES(?,?,?) ON CONFLICT(kind,item_id) DO UPDATE SET project_id = excluded.project_id')
+      .bind(kind, id, project)
+      .run()
+  }
+  const visible = (kind, id) => {
+    const p = where.get(`${kind}:${id}`)
+    return project ? p === project : mayRead(mine, p)
+  }
+  const writable = (kind, id) => mayWrite(mine, where.get(`${kind}:${id}`))
+
+  async function findItem(id) {
+    const row = await env.DB.prepare('SELECT * FROM ws_items WHERE id=? AND archived=0').bind(id).first()
+    if (!row) fail('Not found.', 404)
+    const kind = KIND_OF[row.type]
+    if (!visible(kind, row.id)) fail('Not found.', 404)
+    return { ...row, content: JSON.parse(row.content), kind }
+  }
+
+  if (path === '/items' && method === 'GET') {
+    const all = await rows(env.DB.prepare('SELECT id,type,title,icon,revision,created_by,created_at,updated_at FROM ws_items WHERE archived=0 ORDER BY updated_at DESC'))
+    return json(all.filter((i) => visible(KIND_OF[i.type], i.id)).map((i) => ({ ...i, project: where.get(`${KIND_OF[i.type]}:${i.id}`) ?? null })))
+  }
   if (path === '/items' && method === 'POST') {
     const b = await body(req)
     if (!TYPES.includes(b.type)) fail('Choose document, board, or meeting.')
+    if (project && !mayWrite(mine, project)) fail('You have read-only access to this project.', 403)
     const id = crypto.randomUUID(), stamp = now(), title = text(b.title) || `Untitled ${b.type}`
     const content = b.content || (b.type === 'board' ? { title, revision: 1, nodes: [], edges: [] } : { doc: { type: 'doc', content: [{ type: 'paragraph' }] } })
     await env.DB.prepare('INSERT INTO ws_items(id,type,title,content,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?)')
-      .bind(id, b.type, title, JSON.stringify(content), owner.id, stamp, stamp)
+      .bind(id, b.type, title, JSON.stringify(content), who.id, stamp, stamp)
       .run()
-    return json(await findItem(env, id), 201)
+    await place(KIND_OF[b.type], id)
+    where.set(`${KIND_OF[b.type]}:${id}`, project || undefined)
+    return json(await findItem(id), 201)
   }
   const item = path.match(/^\/items\/([^/]+)(\/board)?$/)
   if (item) {
     const [, id, board] = item
-    const cur = await findItem(env, id)
+    const cur = await findItem(id)
+    const change = () => {
+      if (!writable(cur.kind, id)) fail('You have read-only access to this project.', 403)
+    }
     if (board) {
       if (cur.type !== 'board') fail('This item is not a board.')
       if (method === 'GET') return json(cur.content)
       if (method === 'PUT') {
+        change()
         const b = await body(req)
         if (!Array.isArray(b.nodes) || !Array.isArray(b.edges)) fail('Invalid board.')
         if (b.revision !== cur.content.revision) fail('Board changed elsewhere. Reload before editing.', 409)
@@ -109,35 +318,50 @@ async function api(req, env) {
         return json(next)
       }
     }
-    if (method === 'GET') return json(cur)
+    if (method === 'GET') return json({ ...cur, project: where.get(`${cur.kind}:${id}`) ?? null })
     if (method === 'PUT') {
+      change()
       const b = await body(req)
       if (b.revision !== cur.revision) fail('Someone updated this. Reload before saving.', 409)
       const r = await env.DB.prepare('UPDATE ws_items SET title=?,content=?,revision=revision+1,updated_at=? WHERE id=? AND revision=?')
         .bind(text(b.title) || 'Untitled', JSON.stringify(b.content ?? cur.content), now(), id, cur.revision)
         .run()
       if (r.meta.changes !== 1) fail('Someone updated this. Reload before saving.', 409)
-      return json(await findItem(env, id))
+      return json(await findItem(id))
     }
     if (method === 'DELETE') {
+      change()
       await env.DB.prepare('UPDATE ws_items SET archived=1,updated_at=? WHERE id=?').bind(now(), id).run()
       return json({ ok: true })
     }
   }
 
-  if (path === '/tasks' && method === 'GET') return json(await rows(env.DB.prepare('SELECT * FROM ws_tasks WHERE archived=0 ORDER BY created_at')))
+  // --- board cards
+  if (path === '/tasks' && method === 'GET') {
+    const all = await rows(env.DB.prepare('SELECT * FROM ws_tasks WHERE archived=0 ORDER BY created_at'))
+    return json(all.filter((t) => visible('card', t.id)).map((t) => ({ ...t, project: where.get(`card:${t.id}`) ?? null })))
+  }
   if (path === '/tasks' && method === 'POST') {
     const b = await body(req)
     const title = text(b.title, 300)
     if (!title) fail('Add a task title.')
+    if (project && !mayWrite(mine, project)) fail('You have read-only access to this project.', 403)
     const id = crypto.randomUUID(), stamp = now()
     await env.DB.prepare('INSERT INTO ws_tasks(id,title,status,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?)')
-      .bind(id, title, STATUSES.includes(b.status) ? b.status : 'todo', owner.id, stamp, stamp)
+      .bind(id, title, STATUSES.includes(b.status) ? b.status : 'todo', who.id, stamp, stamp)
       .run()
-    return json(await env.DB.prepare('SELECT * FROM ws_tasks WHERE id=?').bind(id).first(), 201)
+    await place('card', id)
+    const made = await env.DB.prepare('SELECT * FROM ws_tasks WHERE id=?').bind(id).first()
+    return json({ ...made, project: project || null }, 201)
   }
   const task = path.match(/^\/tasks\/([^/]+)$/)
-  if (task && method === 'PUT') {
+  if (task && (method === 'PUT' || method === 'DELETE')) {
+    if (!visible('card', task[1])) fail('Not found.', 404)
+    if (!writable('card', task[1])) fail('You have read-only access to this project.', 403)
+    if (method === 'DELETE') {
+      await env.DB.prepare('UPDATE ws_tasks SET archived=1 WHERE id=?').bind(task[1]).run()
+      return json({ ok: true })
+    }
     const b = await body(req)
     if (!STATUSES.includes(b.status) || !['low', 'medium', 'high'].includes(b.priority) || !text(b.title)) fail('Invalid task.')
     const r = await env.DB.prepare(
@@ -146,12 +370,10 @@ async function api(req, env) {
       .bind(text(b.title, 300), text(b.description, 10000), b.status, b.priority, text(b.assignee), text(b.due_date, 10), text(b.linked_item), now(), task[1], b.revision)
       .run()
     if (r.meta.changes !== 1) fail('This task changed elsewhere. Reload and try again.', 409)
-    return json(await env.DB.prepare('SELECT * FROM ws_tasks WHERE id=?').bind(task[1]).first())
+    const after = await env.DB.prepare('SELECT * FROM ws_tasks WHERE id=?').bind(task[1]).first()
+    return json({ ...after, project: where.get(`card:${task[1]}`) ?? null })
   }
-  if (task && method === 'DELETE') {
-    await env.DB.prepare('UPDATE ws_tasks SET archived=1 WHERE id=?').bind(task[1]).run()
-    return json({ ok: true })
-  }
+
   fail('Not found.', 404)
 }
 

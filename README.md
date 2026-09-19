@@ -26,9 +26,13 @@ Nothing is hosted by us. Keys and tokens live in the macOS keychain.
 - **Tabs you choose**: every workspace has a tabs JSON in its own database.
   Rename, hide or add tabs; teams can add their own tab types as packs.
 - **Projects** (optional): split one workspace into separate boards, docs,
-  canvases and meetings, in the same database. Switch under the workspace
-  name; "All projects" shows everything you can see. An admin decides whether
-  a project is open to everyone in the workspace or to people they pick.
+  canvases and meetings, in the same database. You switch between the projects
+  you are in, under the workspace name.
+- **People**: whoever connects the database and makes the first account runs
+  the workspace. They invite the rest with a link, put each person in the
+  projects they need, and give each a role there: runs it, can edit, or read
+  only. Admin can be handed to someone else. All of it lives in the workspace's
+  database, so it travels with the workspace rather than with a Mac.
 
 ## Run it
 
@@ -74,7 +78,8 @@ the active one. Tools:
 | `ws_list`, `ws_read`, `ws_write` | Cards, docs, canvases, meetings, members |
 | `get_workspace`, `set_workspace_tabs` | The workspace's name and tabs JSON |
 | `list_pack_data`, `get_pack_data`, `set_pack_data` | Data for custom tab types |
-| `list_projects`, `create_project`, `move_to_project`, `set_projects_enabled` | Split a workspace into projects and say who is in them |
+| `list_projects`, `create_project`, `set_project_people`, `move_to_project`, `set_projects_enabled` | Projects, and who is in them |
+| `invite_person` | An invite link to send someone |
 | `list_supabase_projects`, `connect_supabase` | Add a Supabase workspace |
 | `get_setup_sql`, `setup_supabase_tables` | Create or upgrade its tables |
 | `connect_cloudflare`, `create_cloudflare_workspace`, `get_cloudflare_deploy` | Add a Cloudflare workspace |
@@ -91,13 +96,35 @@ and Claude does the rest.
   is the only door to D1 and checks a random token kept in your keychain.
 - This Mac: the same schema in PGlite (Postgres in WebAssembly).
 
-### Projects
+### Projects and who may open them
 
-Off until a workspace turns them on. The project list lives in that
-workspace's settings and a `project_items` mapping says which project each
-card, doc, canvas or meeting is in, so nothing about the items changes and
-Supabase, a local folder and Cloudflare all behave the same. Work in no
-project stays visible to everyone.
+Off until a workspace turns them on. Projects, their people and the
+invitations are tables next to the work (`projects`, `project_members`,
+`project_items`, `invites`), so nothing about the items themselves changes.
+Work in no project waits for an admin to file it.
+
+The rules are kept by the database, not by the app:
+
+- **Supabase**: `db/policies.sql` is row-level security over those tables. An
+  invited teammate's Alfredo holds no secret key at all; it connects with the
+  publishable key and their own sign-in, so the project list they see is
+  Postgres's answer. Applied by `npm run db:push`, or by Alfredo when it sets
+  a project up for you.
+- **Cloudflare**: the Worker keeps people, sessions, invitations and
+  memberships in D1 and answers every request accordingly. Its own token still
+  belongs to whoever created the workspace.
+- **This Mac**: one person, no sign-in, so there is nothing to enforce.
+
+An invite link carries where the workspace is and nothing secret. Paste it
+into Alfredo (Add workspace, "I have an invite"), sign in with that email, and
+you land in the projects the invitation names.
+
+### Sign in with Google
+
+Available on Supabase workspaces whose project has the Google provider turned
+on. Google will not sign anyone in inside an app window, so Alfredo opens the
+system browser and catches the answer on `http://127.0.0.1:29981/auth/callback`
+-- add that to the project's redirect URLs.
 
 ### Tabs JSON
 
@@ -116,8 +143,13 @@ database through the pack data tools, never in the code.
 
 ## Security
 
-The server binds to 127.0.0.1 and holds database keys, so it never listens
+The server binds to 127.0.0.1 and can hold database keys, so it never listens
 on the network. The MCP endpoint refuses browser origins and foreign hosts.
+
+Who may see what is decided by the database (row-level security on Supabase,
+the Worker on Cloudflare), so the app is not what stands between a teammate
+and someone else's project. The secret key stays with whoever set the
+workspace up; everyone else holds a session of their own.
 
 ## License
 

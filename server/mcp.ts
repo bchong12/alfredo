@@ -7,6 +7,7 @@ import { z } from 'zod'
 import { storeFor, mondayOf, tabsProblem, PACK_KEY, PROJECT_COLORS, STATUSES as V2_STATUSES } from './v2'
 import { randomUUID } from 'node:crypto'
 import * as wsReg from './workspaces'
+import { inviteLink } from './invite-link'
 import * as connect from './connect'
 import * as cfDeploy from './cloudflare-deploy'
 import { schemaSql } from './supabase-connect'
@@ -159,30 +160,71 @@ connecting a database, and never repeat back tokens or keys.`,
 
   add(
     'create_project',
-    'Add a project to this workspace and turn projects on if they were off. Colours: slate, blue, green, amber, rose, violet, teal, orange. By default everyone in the workspace can open it; pass people (names or emails) to limit it to them, admins aside.',
-    { name: z.string().min(1), color: z.string().optional(), people: z.array(z.string()).optional() },
+    'Add a project and turn projects on if they were off. Colours: slate, blue, green, amber, rose, violet, teal, orange. Only the people you list are in it (workspace admins always are); each takes a role: admin, write or read.',
+    {
+      name: z.string().min(1),
+      color: z.string().optional(),
+      people: z.array(z.object({ person: z.string(), role: z.enum(['admin', 'write', 'read']).optional() })).optional(),
+    },
     async ({ name, color, people }) => {
       const s = ws()
       const list = await s.projects()
-      let members: string[] = []
-      if (people?.length) {
-        const rows = await s.members()
-        members = people.map((x: string) => {
-          const hit = rows.find((m) => m.id === x || m.name.toLowerCase() === x.toLowerCase() || m.email?.toLowerCase() === x.toLowerCase())
-          if (!hit) throw new Error(`Nobody here called "${x}". ws_list members shows them.`)
-          return hit.id
-        })
-      }
-      const p = {
-        id: randomUUID(),
-        name: name.trim().slice(0, 60),
-        color: PROJECT_COLORS.includes(color ?? '') ? color! : 'slate',
-        access: members.length ? ('members' as const) : ('everyone' as const),
-        members,
-      }
+      const rows = await s.members()
+      const members = (people ?? []).map((x: { person: string; role?: string }) => {
+        const hit = rows.find((m) => m.id === x.person || m.name.toLowerCase() === x.person.toLowerCase() || m.email?.toLowerCase() === x.person.toLowerCase())
+        if (!hit) throw new Error(`Nobody here called "${x.person}". ws_list members shows them.`)
+        return { personId: hit.id, role: (x.role ?? 'write') as 'admin' | 'write' | 'read' }
+      })
+      const p = { id: randomUUID(), name: name.trim().slice(0, 60), color: PROJECT_COLORS.includes(color ?? '') ? color! : 'slate', members }
       await s.saveProjects([...list, p])
       await s.saveSettings({ projects: { enabled: true } })
       return ok(p)
+    },
+  )
+
+  add(
+    'set_project_people',
+    "Say who is in a project and what they may do there: admin, write or read. Replaces the list, so pass everyone who should be in it. Workspace admins are in every project anyway.",
+    {
+      project: z.string(),
+      people: z.array(z.object({ person: z.string(), role: z.enum(['admin', 'write', 'read']).optional() })),
+    },
+    async ({ project, people }) => {
+      const s = ws()
+      const list = await s.projects()
+      const id = await projectId(project)
+      const rows = await s.members()
+      const members = people.map((x: { person: string; role?: string }) => {
+        const hit = rows.find((m) => m.id === x.person || m.name.toLowerCase() === x.person.toLowerCase() || m.email?.toLowerCase() === x.person.toLowerCase())
+        if (!hit) throw new Error(`Nobody here called "${x.person}".`)
+        return { personId: hit.id, role: (x.role ?? 'write') as 'admin' | 'write' | 'read' }
+      })
+      await s.saveProjects(list.map((p) => (p.id === id ? { ...p, members } : p)))
+      return ok((await s.projects()).find((p) => p.id === id))
+    },
+  )
+
+  add(
+    'invite_person',
+    "Invite someone to the workspace and hand back a link to send them. They open Alfredo, paste it, sign in with that email, and land in the projects you name. Show the user the link; do not send it anywhere yourself.",
+    {
+      email: z.string(),
+      role: z.enum(['admin', 'member']).optional(),
+      projects: z.array(z.object({ project: z.string(), role: z.enum(['admin', 'write', 'read']).optional() })).optional(),
+    },
+    async ({ email, role, projects }) => {
+      const s = ws()
+      const wanted = []
+      for (const p of projects ?? []) wanted.push({ id: (await projectId(p.project))!, role: (p.role ?? 'write') as 'admin' | 'write' | 'read' })
+      const { invite, token } = await s.createInvite({ email: email.trim().toLowerCase(), role: role === 'admin' ? 'admin' : 'member', projects: wanted })
+      const w = current()?.workspace ?? null
+      const k = w?.kind === 'remote' ? wsReg.supabaseFor(w.id) : null
+      const link = k
+        ? inviteLink({ kind: 'supabase', url: k.url, anonKey: k.anonKey, name: w!.name, token })
+        : w?.kind === 'cloudflare' && w.cloudflare?.url
+          ? inviteLink({ kind: 'cloudflare', url: w.cloudflare.url, name: w.name, token })
+          : null
+      return ok({ invite, link })
     },
   )
 

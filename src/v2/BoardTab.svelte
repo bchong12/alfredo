@@ -2,6 +2,7 @@
   // Board: one cycle at a time (a week, unless the workspace says otherwise).
   // Everything is instant: cycles draw from cache and the neighbours are
   // prefetched; edits show before the server answers and undo if it refuses.
+  import { canEditHere } from './project.svelte'
   import ProjectChip from './ProjectChip.svelte'
   import { dndzone, type DndEvent } from 'svelte-dnd-action'
   import { fly } from 'svelte/transition'
@@ -291,7 +292,7 @@
         </div>
       {/if}
     </div>
-    <button class="btn" onclick={() => ((adding = 'todo'), (draft = ''))}><Plus size={12} /><span>New card</span></button>
+    {#if canEditHere()}<button class="btn" onclick={() => ((adding = 'todo'), (draft = ''))}><Plus size={12} /><span>New card</span></button>{/if}
   </Header>
 
   {#key week}

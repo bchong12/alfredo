@@ -10,7 +10,7 @@ import { createClient } from '@supabase/supabase-js'
 import { required } from './env'
 
 /** Which Supabase project a token belongs to. Omitted: the one in the environment. */
-export type Project = { url: string; serviceKey: string }
+export type Project = { url: string; serviceKey?: string | null; anonKey?: string }
 
 // Created on first use, one per project: a laptop with only local workspaces never needs one.
 const verifiers = new Map<string, ReturnType<typeof createClient>>()
@@ -18,7 +18,8 @@ function getVerifier(p?: Project) {
   const url = p?.url ?? required('SUPABASE_URL')
   let v = verifiers.get(url)
   if (!v) {
-    v = createClient(url, p?.serviceKey ?? required('SUPABASE_SERVICE_ROLE_KEY'), {
+    // Either key can say who a token belongs to; a member install has only the publishable one.
+    v = createClient(url, p?.serviceKey ?? p?.anonKey ?? required('SUPABASE_SERVICE_ROLE_KEY'), {
       auth: { persistSession: false, autoRefreshToken: false },
     })
     verifiers.set(url, v)
