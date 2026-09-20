@@ -2,8 +2,8 @@
   // Docs: a home page of everything written, and each doc opening full width.
   import ProjectChip from './ProjectChip.svelte'
   import ProjectPicker from './ProjectPicker.svelte'
-  import { scope } from './project.svelte'
   import { canEditHere } from './project.svelte'
+  import { scope } from './project.svelte'
   import Plus from '@lucide/svelte/icons/plus'
   import Search from '@lucide/svelte/icons/search'
   import FileText from '@lucide/svelte/icons/file-text'
@@ -88,15 +88,35 @@
     }
   })
 
+  /**
+   * A doc just made has a placeholder name and a blank page. Put the cursor
+   * in the name with "Untitled" selected, so the first thing typed names it
+   * and Enter moves on to the writing.
+   */
+  let fresh = $state<string | null>(null)
+  let editor = $state<{ focus: (atEnd?: boolean) => void } | null>(null)
+  let titleEl = $state<HTMLInputElement | null>(null)
+
   async function create() {
     try {
       const d = await v2.post<Doc>('/docs', { title: 'Untitled' })
       docs = [d, ...docs]
+      fresh = d.id
       go(tabId, d.id)
     } catch (e) {
       ui.error = (e as Error).message
     }
   }
+
+  $effect(() => {
+    if (!doc || fresh !== doc.id || !titleEl) return
+    const el = titleEl
+    requestAnimationFrame(() => {
+      el.focus()
+      el.select()
+    })
+    fresh = null
+  })
 
   function queue(patch: Partial<Pick<Doc, 'title' | 'body'>>) {
     if (!doc) return
@@ -147,13 +167,27 @@
         <button class="del" title="Delete doc" onclick={remove}><Trash2 size={13} /></button>
       {/if}
     </Header>
-    <div class="scroll">
+    <!-- Clicking the page anywhere puts the cursor back in the writing, the
+         way paper would; the editor itself is only as tall as its text. -->
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="scroll" onclick={(e) => (e.target as HTMLElement).closest('.scroll') === e.target && editor?.focus(true)}>
       <article>
         {#if doc}
-          <input class="dtitle" value={doc.title} placeholder="Untitled" oninput={(e) => queue({ title: e.currentTarget.value })} />
+          <input
+            class="dtitle"
+            bind:this={titleEl}
+            value={doc.title}
+            placeholder="Untitled"
+            oninput={(e) => queue({ title: e.currentTarget.value })}
+            onkeydown={(e) => {
+              // Enter (or Tab) from the name goes to the writing, as it should.
+              if (e.key === 'Enter' || e.key === 'Tab') (e.preventDefault(), editor?.focus(true))
+            }}
+          />
           <ProjectPicker kind="doc" id={doc.id} project={doc.project ?? null} onchange={(p) => (doc && (doc.project = p), (docs = docs.map((x) => (x.id === doc?.id ? { ...x, project: p } : x))))} />
           {#key doc.id}
-            <DocEditor value={doc.body} onchange={(md) => queue({ body: md })} />
+            <DocEditor bind:this={editor} value={doc.body} onchange={(md) => queue({ body: md })} />
           {/key}
         {:else}
           <div class="skel">

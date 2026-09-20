@@ -2,11 +2,12 @@
   // Meetings: transcribed on this Mac by Parakeet. The audio is thrown away as
   // soon as the transcript exists; what stays is the transcript and the notes.
   import { scope } from './project.svelte'
-  import { canEditHere } from './project.svelte'
   import ProjectChip from './ProjectChip.svelte'
   import ProjectPicker from './ProjectPicker.svelte'
+  import { canEditHere } from './project.svelte'
   import Cpu from '@lucide/svelte/icons/cpu'
   import Calendar from '@lucide/svelte/icons/calendar'
+  import Plus from '@lucide/svelte/icons/plus'
   import Trash2 from '@lucide/svelte/icons/trash-2'
   import Header from './Header.svelte'
   import CopyNode from './CopyNode.svelte'
@@ -140,6 +141,18 @@
     }
   }
 
+  /** A meeting nobody recorded: a call you took notes in, or one written up after. */
+  async function create() {
+    try {
+      const m = await v2.post<Meeting>('/meetings', { title: 'Meeting', notes: '' })
+      meetings = [{ id: m.id, title: m.title, startedAt: m.startedAt, durationS: m.durationS, hasTranscript: false, status: m.status, project: m.project ?? null }, ...meetings]
+      put('/meetings', meetings)
+      go(tabId, m.id)
+    } catch (e) {
+      ui.error = (e as Error).message
+    }
+  }
+
   async function remove() {
     if (!meeting || !confirm(`Delete “${meeting.title}”? Its transcript and notes go too.`)) return
     const id = meeting.id
@@ -226,7 +239,10 @@
 {:else}
   <div class="page">
     <Header crumbs={[tabName]}>
-      {#if canEditHere()}<button class="primary" disabled={engine?.parakeet === false} onclick={() => start()}><i class="dot"></i><span>Transcribe</span></button>{/if}
+      {#if canEditHere()}
+        <button class="ghost" onclick={create}><Plus size={12} /><span>New meeting</span></button>
+        <button class="primary" disabled={engine?.parakeet === false} onclick={() => start()}><i class="dot"></i><span>Transcribe</span></button>
+      {/if}
     </Header>
     <div class="scroll">
       <div class="home">

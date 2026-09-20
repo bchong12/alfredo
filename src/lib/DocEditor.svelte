@@ -13,10 +13,25 @@
     value,
     onchange,
     placeholder = 'Start writing, or press / for blocks',
-  }: { value: string; onchange: (markdown: string) => void; placeholder?: string } = $props()
+    autofocus = false,
+  }: { value: string; onchange: (markdown: string) => void; placeholder?: string; autofocus?: boolean } = $props()
 
   let host = $state<HTMLDivElement | null>(null)
   let crepe: Crepe | null = null
+
+  /** Put the cursor in the writing, at the end. The page calls this when someone clicks it. */
+  export function focus(atEnd = true) {
+    const pm = host?.querySelector('.ProseMirror') as HTMLElement | null
+    if (!pm) return
+    pm.focus()
+    if (!atEnd) return
+    const sel = window.getSelection()
+    const range = document.createRange()
+    range.selectNodeContents(pm)
+    range.collapse(false)
+    sel?.removeAllRanges()
+    sel?.addRange(range)
+  }
 
   $effect(() => {
     const el = host
@@ -61,6 +76,8 @@
       if (!live) return void c.destroy()
       editor = c
       crepe = c
+      // A blank doc should take what you type, rather than swallow it.
+      if (autofocus) requestAnimationFrame(() => focus(true))
     })
 
     return () => {

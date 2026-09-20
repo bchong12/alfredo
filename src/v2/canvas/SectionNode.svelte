@@ -11,7 +11,7 @@
 <NodeResizer isVisible={selected} minWidth={200} minHeight={120} lineStyle="border-color:#ededed" handleStyle="background:#ededed;border:0" />
 <Handles />
 <div class="frame" class:page class:sel={selected}>
-  <div class="label">
+  <div class="label framegrip">
     <span>{d.title ?? 'Frame'}</span>
     {#if d.body && !page}<small>{d.body}</small>{/if}
   </div>

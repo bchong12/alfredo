@@ -21,7 +21,6 @@ import { ask, findPassages, forget, indexProgress, reindex, touch } from './know
 import * as audio from './audio'
 import { transcribe } from './ai-local'
 import { summarize, hasLocalChat, teamContext, type Summary } from './ai'
-import { localKey } from './keys'
 import { parakeetAvailable } from './parakeet'
 import { runComposio } from './composio'
 import { spawn } from 'node:child_process'
@@ -1178,7 +1177,7 @@ export function notesFrom(s: Summary): string {
   return out.join('\n')
 }
 
-async function finish(job: Job, st: Store, path: string, durationS: number, startedAt: number) {
+async function finish(job: Job, st: Store, path: string, durationS: number, startedAt: number, workspace = '') {
   try {
     job.state = 'transcribing'
     const t = await transcribe(path)
@@ -1186,16 +1185,26 @@ async function finish(job: Job, st: Store, path: string, durationS: number, star
     job.state = 'writing'
     let notes = ''
     let title = job.title
-    try {
-      const [set, people] = await Promise.all([st.settings(), st.members()]).catch(() => [null, []] as const)
-      const s = await summarize(hasLocalChat() ? '' : localKey(), t.text, undefined, undefined, teamContext(set?.name, people.map((p) => p.name)))
-      notes = notesFrom(s)
-      if ((!title || title === 'Meeting') && s.title?.trim()) title = s.title.trim()
-    } catch (e) {
-      notes = `_The write-up could not be generated: ${(e as Error).message}_`
+    // What was said is the company's own words, so the write-up is written on
+    // this Mac by Claude Code or not at all. Without it the transcript is still
+    // the meeting; a note saying where the write-up went is enough.
+    if (!hasLocalChat()) {
+      notes = '_Transcribed on this Mac. The write-up is written by Claude Code, which is not installed here; install it (`claude` on your PATH) and the next meeting gets one. The transcript is below._'
+    } else {
+      try {
+        const [set, people] = await Promise.all([st.settings(), st.members()]).catch(() => [null, []] as const)
+        const s = await summarize('', t.text, undefined, undefined, teamContext(set?.name, people.map((p) => p.name)))
+        notes = notesFrom(s)
+        if ((!title || title === 'Meeting') && s.title?.trim()) title = s.title.trim()
+      } catch (e) {
+        notes = `_The write-up could not be generated: ${(e as Error).message}_`
+      }
     }
     const m = await st.createMeeting({ title: title || 'Meeting', transcript: t.text, notes, startedAt: new Date(startedAt).toISOString(), durationS: Math.round(durationS) })
     if (job.project) await st.assign('meeting', [m.id], job.project).catch(() => {})
+    // Into the brain, the same as a meeting saved by hand: a transcript nobody
+    // can find afterwards is half a meeting.
+    touch(st, 'meeting', m.id, workspace)
     job.meetingId = m.id
     job.state = 'done'
   } catch (e) {
@@ -1759,7 +1768,7 @@ export function v2Routes(current: () => { workspace: Workspace; db: unknown } | 
     const job = jobs.get(r.id) ?? { id: r.id, title: 'Meeting', state: 'recording' as const, startedAt: Date.now() - r.durationS * 1000 }
     if (b.title?.trim()) job.title = b.title.trim()
     jobs.set(r.id, job)
-    finish(job, st, r.path, r.durationS, job.startedAt)
+    finish(job, st, r.path, r.durationS, job.startedAt, current()?.workspace.id ?? '')
     return c.json({ id: r.id, systemAudio: r.systemAudio })
   })
   app.get('/transcribe/:id', (c) => {

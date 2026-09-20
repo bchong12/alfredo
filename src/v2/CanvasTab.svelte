@@ -18,6 +18,7 @@
   import Undo2 from '@lucide/svelte/icons/undo-2'
   import Redo2 from '@lucide/svelte/icons/redo-2'
   import Shapes from '@lucide/svelte/icons/shapes'
+  import Minus from '@lucide/svelte/icons/minus'
   import Header from './Header.svelte'
   import CopyNode from './CopyNode.svelte'
   import CardNode from './canvas/CardNode.svelte'
@@ -41,7 +42,11 @@
   let nodes = $state.raw<Node[]>([])
   let edges = $state.raw<Edge[]>([])
   let saving = $state<'idle' | 'saving' | 'saved' | 'conflict'>('idle')
-  let pan = $state(false)
+  /** Which tool has the pointer. Space held down borrows the hand, as everywhere else. */
+  let tool = $state<'select' | 'pan'>('select')
+  let space = $state(false)
+  let zoom = $state(1)
+  const grabbing = $derived(tool === 'pan' || space)
   /** The raw node as stored, so fields this editor does not know survive a save. */
   let raw = new Map<string, any>()
   let rawEdges = new Map<string, any>()
@@ -78,6 +83,10 @@
       width: w,
       height: h,
       zIndex: n.type === 'section' ? -10 : (n.zIndex ?? 0),
+      // A frame is moved by its name, the way frames move in every other tool.
+      // Dragging inside one draws a selection instead, which is what the space
+      // is for; and the frame carries what is in it (see `follow`).
+      ...(n.type === 'section' ? { dragHandle: '.framegrip' } : {}),
       ...(n.parentId ? { parentId: n.parentId } : {}),
     }
   }
@@ -161,6 +170,42 @@
       f.height = Math.round(maxY - minY + top + pad)
     }
     return out
+  }
+
+  /**
+   * Moving a frame moves what is in it. Miro and Figma both do this and a board
+   * is unusable without it: otherwise the frame slides away and leaves its own
+   * cards behind. Taken at the start of the drag, because what counts as inside
+   * is decided before anything moves.
+   */
+  let carried: { anchor: string; from: { x: number; y: number }; kids: Map<string, { x: number; y: number }> } | null = null
+
+  function pickUp(target: Node | null, dragging: Node[]) {
+    carried = null
+    if (!target || target.type !== 'section') return
+    const fr = rect(target)
+    const moving = new Set(dragging.map((n) => n.id))
+    const kids = new Map<string, { x: number; y: number }>()
+    for (const n of nodes) {
+      if (n.id === target.id || moving.has(n.id)) continue
+      const r = rect(n)
+      // A frame inside a frame travels too; a bigger frame around it does not.
+      if (!inside(r, fr)) continue
+      if (n.type === 'section' && r.w * r.h >= fr.w * fr.h) continue
+      kids.set(n.id, { x: n.position.x, y: n.position.y })
+    }
+    if (kids.size) carried = { anchor: target.id, from: { x: target.position.x, y: target.position.y }, kids }
+  }
+
+  function follow(target: Node | null) {
+    if (!carried || !target || target.id !== carried.anchor) return
+    const dx = target.position.x - carried.from.x
+    const dy = target.position.y - carried.from.y
+    if (!dx && !dy) return
+    nodes = nodes.map((n) => {
+      const start = carried!.kids.get(n.id)
+      return start ? { ...n, position: { x: start.x + dx, y: start.y + dy } } : n
+    })
   }
 
   const frames = $derived(nodes.filter((n) => n.type === 'section').map((n) => ({ id: n.id, title: (n.data as any).title ?? 'Frame' })))
@@ -347,8 +392,32 @@
     if ((e.metaKey || e.ctrlKey) && e.key === 'z') {
       e.preventDefault()
       e.shiftKey ? redo() : undo()
+      return
     }
+    if ((e.metaKey || e.ctrlKey) && (e.key === '0' || e.key === '1')) {
+      e.preventDefault()
+      flow?.fitView({ padding: 0.12, duration: 450 })
+      return
+    }
+    if (e.metaKey || e.ctrlKey || e.altKey) return
+    // The tools, on the keys every canvas uses for them.
+    if (e.code === 'Space' && !space) {
+      e.preventDefault()
+      space = true
+      return
+    }
+    const key = e.key.toLowerCase()
+    if (key === 'v') tool = 'select'
+    else if (key === 'h') tool = 'pan'
+    else if (key === 'f') add('section')
+    else if (key === 'n') add('sticky')
+    else if (key === 'r') add('shape')
+    else if (key === 't') add('text')
   }}
+  onkeyup={(e) => {
+    if (e.code === 'Space') space = false
+  }}
+  onblur={() => (space = false)}
 />
 
 {#if ui.item && !canvas}
@@ -374,7 +443,7 @@
       <button class="icon" title="Delete canvas" onclick={removeCanvas}><Trash2 size={13} /></button>
       <span class="state"><i class:live={saving !== 'conflict'}></i>{saving === 'saving' ? 'Saving…' : saving === 'conflict' ? 'Changed elsewhere: reload' : 'Saved'}</span>
     </Header>
-    <div class="flowhost">
+    <div class="flowhost" class:grab={grabbing}>
       <SvelteFlow
         bind:nodes
         bind:edges
@@ -382,13 +451,27 @@
         colorMode="dark"
         minZoom={0.02}
         maxZoom={2}
-        panOnDrag={pan ? true : [1, 2]}
-        selectionOnDrag={!pan}
+        panOnDrag={grabbing ? true : [1, 2]}
+        selectionOnDrag={!grabbing}
+        nodesDraggable={!grabbing}
+        nodesConnectable={!grabbing}
+        elementsSelectable={!grabbing}
+        panOnScroll
+        zoomOnScroll={false}
+        zoomOnPinch
+        zoomOnDoubleClick={false}
+        zIndexMode="manual"
+        onmove={(_e, v) => (zoom = v.zoom)}
         deleteKey={['Backspace', 'Delete']}
         onconnect={onconnect}
-        onnodedragstart={remember}
-        onnodedragstop={() => {
-          nodes = fitFrames(nodes)
+        onnodedragstart={({ targetNode, nodes: dragged }) => {
+          remember()
+          pickUp(targetNode, dragged)
+        }}
+        onnodedrag={({ targetNode }) => follow(targetNode)}
+        onnodedragstop={({ targetNode }) => {
+          follow(targetNode)
+          carried = null
           changed()
         }}
         ondelete={changed}
@@ -419,13 +502,17 @@
       {/if}
 
       <div class="tools">
-        <button class="tool" class:on={!pan} title="Select" onclick={() => (pan = false)}><MousePointer2 size={16} /></button>
-        <button class="tool" class:on={pan} title="Pan" onclick={() => (pan = true)}><Hand size={16} /></button>
+        <button class="tool" class:on={tool === 'select' && !space} title="Select (V)" onclick={() => (tool = 'select')}><MousePointer2 size={16} /></button>
+        <button class="tool" class:on={grabbing} title="Pan (H, or hold space)" onclick={() => (tool = 'pan')}><Hand size={16} /></button>
         <span class="div"></span>
-        <button class="tool" title="Frame" onclick={() => add('section')}><Frame size={16} /></button>
-        <button class="tool" title="Sticky note" onclick={() => add('sticky')}><StickyNote size={16} /></button>
-        <button class="tool" title="Shape" onclick={() => add('shape')}><Square size={16} /></button>
-        <button class="tool" title="Text" onclick={() => add('text')}><Type size={16} /></button>
+        <button class="tool" title="Frame (F)" onclick={() => add('section')}><Frame size={16} /></button>
+        <button class="tool" title="Sticky note (N)" onclick={() => add('sticky')}><StickyNote size={16} /></button>
+        <button class="tool" title="Shape (R)" onclick={() => add('shape')}><Square size={16} /></button>
+        <button class="tool" title="Text (T)" onclick={() => add('text')}><Type size={16} /></button>
+        <span class="div"></span>
+        <button class="tool" title="Zoom out (⌘−)" onclick={() => flow?.zoomOut({ duration: 160 })}><Minus size={16} /></button>
+        <button class="tool zoom" title="Fit board (⌘0)" onclick={() => flow?.fitView({ padding: 0.12, duration: 450 })}>{Math.round(zoom * 100)}%</button>
+        <button class="tool" title="Zoom in (⌘+)" onclick={() => flow?.zoomIn({ duration: 160 })}><Plus size={16} /></button>
         <span class="div"></span>
         <div class="swatches">
           {#each PALETTE.slice(0, 5) as c}
@@ -518,6 +605,30 @@
   .flowhost :global(.svelte-flow__node.selected .svelte-flow__handle) {
     opacity: 1;
   }
+  /* With the hand out, the whole board is a thing to grab: over a card too,
+     which is the point of the tool. */
+  .flowhost.grab :global(.svelte-flow__pane),
+  .flowhost.grab :global(.svelte-flow__node) {
+    cursor: grab;
+  }
+  .flowhost.grab :global(.svelte-flow__pane:active),
+  .flowhost.grab :global(.svelte-flow__pane.dragging),
+  .flowhost.grab :global(.svelte-flow__node:active) {
+    cursor: grabbing;
+  }
+  /* A frame is picked up by its name; the space inside it belongs to the board,
+     so a drag there selects or pans instead of dragging the whole frame away. */
+  .flowhost :global(.svelte-flow__node-section) {
+    pointer-events: none;
+  }
+  .flowhost :global(.svelte-flow__node-section .framegrip),
+  .flowhost :global(.svelte-flow__node-section .svelte-flow__resize-control),
+  .flowhost :global(.svelte-flow__node-section .svelte-flow__handle) {
+    pointer-events: all;
+  }
+  .flowhost :global(.framegrip) {
+    cursor: grab;
+  }
   .flowhost.loading {
     display: flex;
     align-items: center;
@@ -563,6 +674,13 @@
   .tool.on {
     background: #2a2a2a;
     color: var(--ink);
+  }
+  .tool.zoom {
+    width: auto;
+    min-width: 50px;
+    padding: 0 6px;
+    font-family: var(--mono);
+    font-size: 11px;
   }
   .div {
     width: 1px;
