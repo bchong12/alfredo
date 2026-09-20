@@ -10,7 +10,7 @@
 // nothing about a workspace's writing leaves the machine.
 
 import { join } from 'node:path'
-import { existsSync } from 'node:fs'
+import { existsSync, rmSync } from 'node:fs'
 import { appHome } from './home'
 import type { FeatureExtractionPipeline } from '@huggingface/transformers'
 
@@ -39,22 +39,36 @@ export function embedderState() {
  * startup: it is a native module and tens of megabytes, and the rest of
  * Alfredo must open whether or not it is there.
  */
+async function start(): Promise<FeatureExtractionPipeline> {
+  const { env: hfEnv, pipeline } = await import('@huggingface/transformers')
+  hfEnv.cacheDir = MODELS
+  hfEnv.allowLocalModels = true
+  try {
+    return await pipeline('feature-extraction', EMBED_MODEL, { dtype: DTYPE })
+  } catch (e) {
+    // Two copies of Alfredo fetching the model at once leave half a file
+    // behind, and half a file never loads. Throw it away and fetch again.
+    const dir = join(MODELS, ...EMBED_MODEL.split('/'))
+    if (!existsSync(dir)) throw e
+    rmSync(dir, { recursive: true, force: true })
+    return pipeline('feature-extraction', EMBED_MODEL, { dtype: DTYPE })
+  }
+}
+
 function load() {
   if (!pipe) {
     state = 'loading'
-    pipe = import('@huggingface/transformers')
-      .then(({ env: hfEnv, pipeline }) => {
-        hfEnv.cacheDir = MODELS
-        hfEnv.allowLocalModels = true
-        return pipeline('feature-extraction', EMBED_MODEL, { dtype: DTYPE })
-      })
+    pipe = start()
       .then((p) => {
         state = 'ready'
+        problem = ''
         return p
       })
       .catch((e) => {
         state = 'failed'
         problem = (e as Error).message
+        // A later question may well work: a network came back, or the other
+        // copy of Alfredo finished. Let it try again rather than stay broken.
         pipe = null
         throw e
       })
