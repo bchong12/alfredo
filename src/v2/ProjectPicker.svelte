@@ -1,6 +1,7 @@
 <script lang="ts">
   // Which project one card, doc, canvas or meeting belongs to. Only shown
   // when the workspace uses projects.
+  import Select from './Select.svelte'
   import { v2, type InProject } from './api'
   import { scope, liveProjects } from './project.svelte'
   import { drop } from './cache'
@@ -39,10 +40,12 @@
 {#if scope.enabled}
   <label class="pick">
     {#if label}<span>Project</span>{/if}
-    <select value={value ?? ''} onchange={(e) => move(e.currentTarget.value || null)}>
-      <option value="">No project</option>
-      {#each liveProjects() as p (p.id)}<option value={p.id}>{p.name}</option>{/each}
-    </select>
+    <Select
+      value={value ?? ''}
+      options={[{ value: '', label: 'No project', dot: 'none' }, ...liveProjects().map((p) => ({ value: p.id, label: p.name, dot: p.color }))]}
+      onchange={(v) => move(v || null)}
+      ariaLabel="Project"
+    />
   </label>
 {/if}
 
@@ -54,15 +57,5 @@
     font-size: var(--fs-1);
     color: var(--muted);
     min-width: 0;
-  }
-  select {
-    height: 30px;
-    padding: 0 8px;
-    border-radius: var(--r-md);
-    background: var(--bg);
-    border: 1px solid var(--line-strong);
-    color: var(--ink);
-    font: inherit;
-    font-size: var(--fs-2);
   }
 </style>

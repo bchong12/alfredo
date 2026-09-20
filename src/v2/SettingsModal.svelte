@@ -5,6 +5,7 @@
 
 <script lang="ts">
   // Settings for the current workspace (and a little for this app).
+  import Select from './Select.svelte'
   import FolderTree from '@lucide/svelte/icons/folder-tree'
   import { scope, PROJECT_COLORS_LIST as PROJECT_COLORS, type Project, type ProjectRole } from './project.svelte'
   import { rememberBrand, rememberFaces, forgetBrand } from './remembered.svelte'
@@ -431,10 +432,14 @@
             {#each projects as p, i (p.id || i)}
               <div class="pitem">
                 <div class="prow">
-                  <select class="field pcolor" value={p.color} disabled={!scope.canManage} onchange={(e) => saveProjects(projects.map((x, k) => (k === i ? { ...x, color: e.currentTarget.value } : x)))} aria-label="Colour">
-                    {#each PROJECT_COLORS as c}<option value={c}>{c}</option>{/each}
-                  </select>
-                  <i class="pdot {p.color}"></i>
+                  <Select
+                    value={p.color}
+                    width="128px"
+                    disabled={!scope.canManage}
+                    options={PROJECT_COLORS.map((c) => ({ value: c, label: c, dot: c }))}
+                    onchange={(c) => saveProjects(projects.map((x, k) => (k === i ? { ...x, color: c } : x)))}
+                    ariaLabel="Colour"
+                  />
                   <input
                     class="field grow"
                     value={p.name}
@@ -462,12 +467,19 @@
                           {#if m.role === 'admin'}
                             <span class="s">Workspace admin</span>
                           {:else}
-                            <select class="field small" value={role ?? ''} onchange={(e) => setRoleIn(i, m.id, (e.currentTarget.value || null) as ProjectRole | null)}>
-                              <option value="">Not in it</option>
-                              <option value="read">Read only</option>
-                              <option value="write">Can edit</option>
-                              <option value="admin">Runs it</option>
-                            </select>
+                            <Select
+                              value={role ?? ''}
+                              width="130px"
+                              align="right"
+                              options={[
+                              { value: '', label: 'Not in it' },
+                              { value: 'read', label: 'Read only' },
+                              { value: 'write', label: 'Can edit' },
+                              { value: 'admin', label: 'Runs it' },
+                            ]}
+                              onchange={(v) => setRoleIn(i, m.id, (v || null) as ProjectRole | null)}
+                              ariaLabel="What {m.name} may do"
+                            />
                           {/if}
                         </div>
                       {/each}
@@ -539,13 +551,19 @@
               </div>
             {/each}
             <div class="addtab">
-              <select bind:value={newType}>
-                <option value="board">Board</option>
-                <option value="docs">Docs</option>
-                <option value="canvas">Canvas</option>
-                <option value="meetings">Meetings</option>
-                {#each Object.keys(PACK_TABS) as type (type)}<option value={type}>{type.charAt(0).toUpperCase() + type.slice(1)}</option>{/each}
-              </select>
+              <Select
+                value={newType}
+                width="150px"
+                options={[
+                  { value: 'board', label: 'Board' },
+                  { value: 'docs', label: 'Docs' },
+                  { value: 'canvas', label: 'Canvas' },
+                  { value: 'meetings', label: 'Meetings' },
+                  ...Object.keys(PACK_TABS).map((t) => ({ value: t, label: t.charAt(0).toUpperCase() + t.slice(1) })),
+                ]}
+                onchange={(v) => (newType = v)}
+                ariaLabel="What the tab shows"
+              />
               <button class="ghost" onclick={addTab}><Plus size={12} />Add tab</button>
             </div>
           </div>
@@ -577,7 +595,16 @@
             </div>
             <div class="invite">
               <input class="field grow" placeholder="name@company.com" bind:value={inviteEmail} onkeydown={(e) => e.key === 'Enter' && makeInvite()} />
-              <select class="field" bind:value={inviteRole}><option value="member">Member</option><option value="admin">Admin</option></select>
+              <Select
+                value={inviteRole}
+                width="124px"
+                options={[
+                  { value: 'member', label: 'Member' },
+                  { value: 'admin', label: 'Admin', hint: 'runs it' },
+                ]}
+                onchange={(v) => (inviteRole = v as 'member' | 'admin')}
+                ariaLabel="Their role here"
+              />
               <button class="primary" onclick={makeInvite}>{invitesAreLinks ? 'Make a link' : 'Add'}</button>
             </div>
             {#if invitesAreLinks && scope.enabled && projects.length}
@@ -586,22 +613,24 @@
                   <div class="who">
                     <i class="pdot {p.color}"></i>
                     <span class="wname">{p.name}</span>
-                    <select
-                      class="field small"
+                    <Select
                       value={inviteProjects[p.id] ?? ''}
-                      onchange={(e) => {
-                        const v = e.currentTarget.value as ProjectRole | ''
+                      width="130px"
+                      align="right"
+                      options={[
+                              { value: '', label: 'Not in it' },
+                              { value: 'read', label: 'Read only' },
+                              { value: 'write', label: 'Can edit' },
+                              { value: 'admin', label: 'Runs it' },
+                            ]}
+                      onchange={(v) => {
                         const next = { ...inviteProjects }
-                        if (v) next[p.id] = v
+                        if (v) next[p.id] = v as ProjectRole
                         else delete next[p.id]
                         inviteProjects = next
                       }}
-                    >
-                      <option value="">Not in it</option>
-                      <option value="read">Read only</option>
-                      <option value="write">Can edit</option>
-                      <option value="admin">Runs it</option>
-                    </select>
+                      ariaLabel="What they may do in {p.name}"
+                    />
                   </div>
                 {/each}
               </div>
@@ -642,10 +671,17 @@
                 {#if ws?.kind === 'cloudflare' || !scope.canManage}
                   <span class="role">{#if p.role === 'admin'}<Shield size={11} />{/if}{p.role === 'admin' ? 'Admin' : p.role === 'viewer' ? 'Viewer' : 'Member'}</span>
                 {:else}
-                  <select class="role" value={p.role} onchange={(e) => setRole(p, e.currentTarget.value)}>
-                    <option value="admin">Admin</option>
-                    <option value="member">Member</option>
-                  </select>
+                  <Select
+                    value={p.role}
+                    width="110px"
+                    align="right"
+                    options={[
+                      { value: 'admin', label: 'Admin' },
+                      { value: 'member', label: 'Member' },
+                    ]}
+                    onchange={(v) => setRole(p, v)}
+                    ariaLabel="What {p.name} may do here"
+                  />
                 {/if}
               </div>
             </div>
@@ -687,11 +723,18 @@
                 <span class="al"><img src={a.logo} alt="" loading="lazy" /></span>
                 <div class="dbt grow"><span class="h">{a.name}</span><span class="s">{a.blurb}</span></div>
                 {#if rows.length}
-                  <select class="field small" title="Which account this workspace uses" value={here} onchange={(e) => useAccount(a.slug, e.currentTarget.value)}>
-                    <option value="">Not here</option>
-                    {#each rows as acc (acc.alias || acc.id)}<option value={acc.alias || acc.id}>{accountLabel(acc)}</option>{/each}
-                    <option value="__new">Connect another…</option>
-                  </select>
+                  <Select
+                    value={here}
+                    width="150px"
+                    align="right"
+                    options={[
+                      { value: '', label: 'Not here' },
+                      ...rows.map((acc) => ({ value: acc.alias || acc.id, label: accountLabel(acc) })),
+                      { value: '__new', label: 'Connect another…' },
+                    ]}
+                    onchange={(v) => useAccount(a.slug, v)}
+                    ariaLabel="Which account {a.name} uses here"
+                  />
                 {:else}
                   <button class="ghost" onclick={() => link(a.slug)}>Connect</button>
                 {/if}
@@ -1222,16 +1265,6 @@
     gap: 8px;
     padding-top: 4px;
   }
-  select {
-    height: 30px;
-    padding: 0 8px;
-    border-radius: var(--r-md);
-    background: var(--bg);
-    border: 1px solid var(--line-strong);
-    color: var(--ink);
-    font: inherit;
-    font-size: 12px;
-  }
   .json {
     min-height: 300px;
     font-family: var(--mono);
@@ -1349,9 +1382,6 @@
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
-  }
-  .app select {
-    max-width: 150px;
   }
   .al {
     width: 34px;

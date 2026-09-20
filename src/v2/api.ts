@@ -49,12 +49,16 @@ const P = '/api/v2'
  * open another, and run the call again.
  */
 async function withProject<T>(run: () => Promise<T>): Promise<T> {
+  // What this call told the server, so a refusal about a project can be told
+  // apart from a refusal about anything else.
+  const sent = projectHeader()['x-project']
   try {
     return await run()
   } catch (e) {
     const status = (e as Error).message.match(/\((\d{3})\)/)?.[1]
-    if ((status === '404' || status === '403') && (await forgetProject())) return run()
-    throw e
+    if (!sent || (status !== '404' && status !== '403')) throw e
+    await forgetProject()
+    return run()
   }
 }
 

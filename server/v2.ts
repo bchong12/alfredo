@@ -1331,10 +1331,13 @@ export function v2Routes(current: () => { workspace: Workspace; db: unknown } | 
     if (asked) return asked
     const person = c.get?.('person') as { id: string; email: string } | undefined
     const people = await store().members()
+    // No sign-in at all means a workspace on this Mac: whoever is at the
+    // keyboard owns it, and there is nobody to keep anything from.
+    if (!person?.email) return { id: people[0]?.id ?? null, admin: true }
     // A workspace nobody has been made admin of yet is run by whoever is in
     // it: someone has to be able to hand out the first roles.
     const settled = people.some((p) => p.role === 'admin')
-    const mine = person?.email ? people.find((p) => p.email?.toLowerCase() === person.email.toLowerCase()) : null
+    const mine = people.find((p) => p.email?.toLowerCase() === person.email.toLowerCase())
     return { id: mine?.id ?? null, admin: !settled || mine?.role === 'admin' }
   }
   /** The projects this person may open, and what they may do in each. */

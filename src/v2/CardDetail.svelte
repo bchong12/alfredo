@@ -1,6 +1,7 @@
 <script lang="ts">
   // A card, opened. Closing applies the changes at once; the board sends them
   // and puts things back only if the server refuses.
+  import Select from './Select.svelte'
   import ProjectPicker from './ProjectPicker.svelte'
   import X from '@lucide/svelte/icons/x'
   import Trash2 from '@lucide/svelte/icons/trash-2'
@@ -63,25 +64,28 @@
     <div class="row">
       <label>
         <span>Status</span>
-        <select bind:value={status}>
-          {#each STATUSES as s}<option value={s.id}>{s.label}</option>{/each}
-        </select>
+        <Select value={status} options={STATUSES.map((s) => ({ value: s.id, label: s.label }))} onchange={(v) => (status = v as typeof status)} ariaLabel="Status" />
       </label>
       <label>
         <span>Assignee</span>
-        <select bind:value={assigneeId}>
-          <option value={null}>Nobody</option>
-          {#each ui.members as m}<option value={m.id}>{m.name}</option>{/each}
-        </select>
+        <Select
+          value={assigneeId ?? ''}
+          options={[{ value: '', label: 'Nobody' }, ...ui.members.map((m) => ({ value: m.id, label: m.name }))]}
+          onchange={(v) => (assigneeId = v || null)}
+          ariaLabel="Assignee"
+        />
       </label>
       <label>
         <span>{(view?.settings.length ?? 1) === 1 ? 'Week' : 'Cycle'}</span>
-        <select bind:value={week}>
-          <option value="backlog">Backlog</option>
-          {#each [...(view?.cycles ?? [])].reverse() as c (c.start)}
-            <option value={c.start}>{c.label} · {weekRange(c.start, c.end)}{c.current ? ' (current)' : ''}</option>
-          {/each}
-        </select>
+        <Select
+          value={week}
+          options={[
+            { value: 'backlog', label: 'Backlog' },
+            ...[...(view?.cycles ?? [])].reverse().map((c) => ({ value: c.start, label: `${c.label} · ${weekRange(c.start, c.end)}`, hint: c.current ? 'current' : undefined })),
+          ]}
+          onchange={(v) => (week = v)}
+          ariaLabel="Cycle"
+        />
       </label>
       <ProjectPicker kind="card" id={card.id} project={card.project ?? null} label />
       {#if assigneeId}<Face person={ui.members.find((m) => m.id === assigneeId) ?? null} size={24} />{/if}

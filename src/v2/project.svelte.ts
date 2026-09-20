@@ -69,12 +69,9 @@ export const projectHeader = (): Record<string, string> => (scope.enabled && sco
 
 /**
  * Check the open project against the workspace, and let it go if it is not
- * there any more. Says whether anything changed, so a call can be run again.
+ * there any more. A call that was refused over a project runs again after.
  */
-export async function forgetProject(): Promise<boolean> {
-  const had = scope.enabled ? scope.id : null
-  if (!had) return false
+export async function forgetProject(): Promise<void> {
   const { refreshProjects } = await import('./state.svelte')
   await refreshProjects()
-  return (scope.enabled ? scope.id : null) !== had
 }
