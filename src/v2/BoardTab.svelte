@@ -22,6 +22,7 @@
   import { v2, STATUSES, weekRange, type Card, type Status, type CyclesView } from './api'
   import { peek, load as fetchCached, put, prefetch, drop } from './cache'
   import { ui, openSettings } from './state.svelte'
+  import { takeFocus } from './focus'
 
   let { tabName = 'Board', columns }: { tabName?: string; columns?: string[] } = $props()
 
@@ -307,12 +308,11 @@
             <button class="icon" title="Add a card" onclick={() => ((adding = st.id), (draft = ''))}><Plus size={13} /></button>
           </header>
           {#if adding === st.id}
-            <!-- svelte-ignore a11y_autofocus -->
             <input
               class="new"
               placeholder="Card title, then Enter"
               bind:value={draft}
-              autofocus
+              use:takeFocus
               onkeydown={(e) => {
                 if (e.key === 'Enter') add(st.id)
                 if (e.key === 'Escape') adding = null

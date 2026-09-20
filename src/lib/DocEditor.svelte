@@ -1,5 +1,7 @@
 <script lang="ts">
   import { Crepe } from '@milkdown/crepe'
+  import { replaceAll } from '@milkdown/kit/utils'
+  import { untrack } from 'svelte'
   import '@milkdown/crepe/theme/common/style.css'
   import '@milkdown/crepe/theme/classic-dark.css'
 
@@ -33,6 +35,14 @@
     sel?.addRange(range)
   }
 
+  /**
+   * The markdown the editor is known to hold: what it was seeded with, or the
+   * last thing it emitted. The page saves what we emit and hands it straight
+   * back as `value`, and without this the editor would treat its own writing
+   * as an outside change and reload itself under the cursor.
+   */
+  let held = ''
+
   $effect(() => {
     const el = host
     if (!el) return
@@ -42,7 +52,11 @@
     let live = true
     let editor: Crepe | null = null
 
-    const seed = value
+    // Only `host` may rebuild the editor. Reading the writing here would make
+    // every keystroke tear it down and put it back — the cursor jumps to the
+    // end, the selection goes, and whatever was typed in between is lost.
+    const seed = untrack(() => value)
+    held = seed
     const c = new Crepe({
       root: el,
       defaultValue: seed,
@@ -62,22 +76,31 @@
         [Crepe.Feature.AI]: false,
       },
       featureConfigs: {
-        [Crepe.Feature.Placeholder]: { text: placeholder, mode: 'block' },
+        [Crepe.Feature.Placeholder]: { text: untrack(() => placeholder), mode: 'block' },
       },
     })
 
     c.on((listener) => {
       listener.markdownUpdated((_ctx, markdown) => {
-        if (live) onchange(markdown)
+        if (!live) return
+        held = markdown
+        onchange(markdown)
       })
     })
 
+    const wantsFocus = untrack(() => autofocus)
     c.create().then(() => {
       if (!live) return void c.destroy()
       editor = c
       crepe = c
+      // The writing may have finished loading while the editor was starting.
+      const now = untrack(() => value)
+      if (now !== held) {
+        held = now
+        c.editor.action(replaceAll(now))
+      }
       // A blank doc should take what you type, rather than swallow it.
-      if (autofocus) requestAnimationFrame(() => focus(true))
+      if (wantsFocus) requestAnimationFrame(() => focus(true))
     })
 
     return () => {
@@ -85,6 +108,22 @@
       editor?.destroy()
       crepe = null
     }
+  })
+
+  /**
+   * Writing that arrived from somewhere else: the doc finished loading behind
+   * the cached copy, or a teammate saved. It is put in only when it really is
+   * different and nobody is typing, so an open cursor is never disturbed.
+   */
+  $effect(() => {
+    const next = value
+    untrack(() => {
+      if (!crepe || next === held || next === crepe.getMarkdown()) return
+      const pm = host?.querySelector('.ProseMirror')
+      if (pm && (pm === document.activeElement || pm.contains(document.activeElement))) return
+      held = next
+      crepe.editor.action(replaceAll(next))
+    })
   })
 </script>
 

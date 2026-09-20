@@ -11,6 +11,7 @@
   import Mic from '@lucide/svelte/icons/mic'
   import { v2, type Card, type DocSummary, type CanvasSummary, type MeetingSummary } from './api'
   import { ui, go } from './state.svelte'
+  import { takeFocus } from './focus'
 
   let { onclose }: { onclose: () => void } = $props()
   type Kind = 'card' | 'doc' | 'canvas' | 'meeting'
@@ -72,9 +73,9 @@
   <div class="box" onclick={(e) => e.stopPropagation()}>
     <label class="in">
       <Search size={15} />
-      <!-- svelte-ignore a11y_autofocus -->
+
       <input
-        autofocus
+        use:takeFocus
         placeholder="Search, or ask this workspace a question"
         bind:value={q}
         oninput={() => (idx = 0)}
