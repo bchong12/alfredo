@@ -9,8 +9,9 @@
 // It downloads on first use and is kept with the rest of Alfredo's things, so
 // nothing about a workspace's writing leaves the machine.
 
-import { join } from 'node:path'
-import { existsSync, rmSync } from 'node:fs'
+import { join, dirname } from 'node:path'
+import { existsSync, mkdirSync, rmSync, statSync } from 'node:fs'
+import { writeFile } from 'node:fs/promises'
 import { appHome } from './home'
 import type { FeatureExtractionPipeline } from '@huggingface/transformers'
 
@@ -20,18 +21,45 @@ const DTYPE = (process.env.ALFREDO_EMBED_DTYPE ?? 'q8') as 'q8' | 'fp32'
 
 const MODELS = join(appHome(), 'models')
 
+/** The four files a feature-extraction model needs, and nothing else. */
+const FILES = ['config.json', 'tokenizer.json', 'tokenizer_config.json', 'onnx/model_quantized.onnx']
+
 let pipe: Promise<FeatureExtractionPipeline> | null = null
-let state: 'idle' | 'loading' | 'ready' | 'failed' = 'idle'
+let state: 'idle' | 'loading' | 'downloading' | 'ready' | 'failed' = 'idle'
 let problem = ''
+let got = 0
+
+const modelDir = () => join(MODELS, ...EMBED_MODEL.split('/'))
 
 /** Whether the model is already on this Mac, so nothing has to be downloaded. */
-export function embedderDownloaded() {
-  const dir = join(MODELS, ...EMBED_MODEL.split('/'))
-  return existsSync(dir)
-}
+export const embedderDownloaded = () => FILES.every((f) => existsSync(join(modelDir(), f)) && statSync(join(modelDir(), f)).size > 0)
 
 export function embedderState() {
-  return { model: EMBED_MODEL, dims: EMBED_DIMS, downloaded: embedderDownloaded(), state, error: problem || undefined }
+  return { model: EMBED_MODEL, dims: EMBED_DIMS, downloaded: embedderDownloaded(), state, files: got, of: FILES.length, error: problem || undefined }
+}
+
+/**
+ * Fetch the model ourselves rather than leaving it to the library's cache,
+ * which quietly hands back nothing when it cannot write, and then the only
+ * symptom is a model that will not load. Four files, written once, and a
+ * count the Models screen can show while they arrive.
+ */
+async function download() {
+  state = 'downloading'
+  got = 0
+  for (const file of FILES) {
+    const to = join(modelDir(), file)
+    if (existsSync(to) && statSync(to).size > 0) {
+      got++
+      continue
+    }
+    const from = `https://huggingface.co/${EMBED_MODEL}/resolve/main/${file}`
+    const r = await fetch(from)
+    if (!r.ok) throw new Error(`Could not fetch ${file} for ${EMBED_MODEL} (${r.status}).`)
+    mkdirSync(dirname(to), { recursive: true })
+    await writeFile(to, Buffer.from(await r.arrayBuffer()))
+    got++
+  }
 }
 
 /**
@@ -40,17 +68,21 @@ export function embedderState() {
  * Alfredo must open whether or not it is there.
  */
 async function start(): Promise<FeatureExtractionPipeline> {
+  if (!embedderDownloaded()) await download()
   const { env: hfEnv, pipeline } = await import('@huggingface/transformers')
+  // Everything is on disk already, so it loads from there and asks nobody.
+  hfEnv.localModelPath = MODELS
   hfEnv.cacheDir = MODELS
   hfEnv.allowLocalModels = true
+  hfEnv.allowRemoteModels = false
+  state = 'loading'
   try {
     return await pipeline('feature-extraction', EMBED_MODEL, { dtype: DTYPE })
   } catch (e) {
-    // Two copies of Alfredo fetching the model at once leave half a file
-    // behind, and half a file never loads. Throw it away and fetch again.
-    const dir = join(MODELS, ...EMBED_MODEL.split('/'))
-    if (!existsSync(dir)) throw e
-    rmSync(dir, { recursive: true, force: true })
+    // A half-written file never loads. Throw it away and fetch it again.
+    rmSync(modelDir(), { recursive: true, force: true })
+    await download()
+    state = 'loading'
     return pipeline('feature-extraction', EMBED_MODEL, { dtype: DTYPE })
   }
 }
