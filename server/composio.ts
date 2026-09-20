@@ -7,9 +7,10 @@
 // environment and pass --account when they run tools.
 
 import { spawn } from 'node-pty'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { appHome } from './home'
 
 const SHELL = process.env.SHELL || '/bin/zsh'
 const q = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`
@@ -24,6 +25,9 @@ export const TOOLKITS: { slug: string; name: string; blurb: string }[] = [
   { slug: 'linear', name: 'Linear', blurb: 'Issues and projects' },
   { slug: 'canvas', name: 'Canvas', blurb: 'Courses and assignments' },
   { slug: 'googledrive', name: 'Google Drive', blurb: 'Files and folders' },
+  { slug: 'googlemeet', name: 'Google Meet', blurb: 'Meeting links and spaces' },
+  { slug: 'googledocs', name: 'Google Docs', blurb: 'Documents to import' },
+  { slug: 'googlesheets', name: 'Google Sheets', blurb: 'Tables to read' },
 ]
 
 const strip = (s: string) =>
@@ -107,6 +111,75 @@ export async function accounts(toolkit: string): Promise<Account[]> {
     status: String(r.status ?? 'ACTIVE').toUpperCase(),
     email: r.email ?? r.user_email ?? r.metadata?.email ?? undefined,
   }))
+}
+
+// --- one answer for the whole panel -------------------------------------------
+//
+// Every card used to cost its own CLI run through a login shell, which is
+// seconds each and made the page crawl. The panel asks once now: the answer
+// is kept in memory and on disk, handed over at once, and refreshed behind
+// the screen so the next visit is instant too.
+
+export type Snapshot = {
+  status: { installed: boolean; loggedIn: boolean; email: string }
+  accounts: Record<string, Account[]>
+  at: number
+  checking: boolean
+}
+
+const FILE = join(appHome(), 'cache', 'composio.json')
+const FRESH_MS = 5 * 60_000
+let memo: Snapshot | null = null
+let running: Promise<Snapshot> | null = null
+
+function fromDisk(): Snapshot | null {
+  try {
+    return JSON.parse(readFileSync(FILE, 'utf8')) as Snapshot
+  } catch {
+    return null
+  }
+}
+
+function toDisk(s: Snapshot) {
+  try {
+    mkdirSync(dirname(FILE), { recursive: true })
+    writeFileSync(FILE, JSON.stringify(s))
+  } catch {}
+}
+
+async function look(): Promise<Snapshot> {
+  const st = await status()
+  const byApp: Record<string, Account[]> = {}
+  if (st.loggedIn) {
+    // All at once: the CLI runs are independent and each one is a shell start.
+    const pairs = await Promise.all(TOOLKITS.map(async (t) => [t.slug, await accounts(t.slug).catch(() => [] as Account[])] as const))
+    for (const [slug, rows] of pairs) byApp[slug] = rows
+  }
+  const snap: Snapshot = { status: st, accounts: byApp, at: Date.now(), checking: false }
+  memo = snap
+  toDisk(snap)
+  return snap
+}
+
+/**
+ * What the panel draws. Nothing here ever waits on the CLI: a known answer
+ * comes back at once, and a first visit gets an empty one that fills in.
+ */
+export async function snapshot(force = false): Promise<Snapshot> {
+  const have = memo ?? fromDisk()
+  if (have) memo = have
+  const stale = !have || Date.now() - have.at > FRESH_MS || force
+  if (!stale) return have!
+  if (!running) running = look().finally(() => (running = null))
+  return have ? { ...have, checking: true } : { status: { installed: installed(), loggedIn: installed(), email: '' }, accounts: {}, at: 0, checking: true }
+}
+
+/** After linking or unlinking, the next look should be a real one. */
+export function invalidate() {
+  memo = null
+  try {
+    writeFileSync(FILE, JSON.stringify({ status: { installed: true, loggedIn: true, email: '' }, accounts: {}, at: 0, checking: false }))
+  } catch {}
 }
 
 /** Start an OAuth link: the URL to open, and the account id to watch for. */

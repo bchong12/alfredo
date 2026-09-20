@@ -1,6 +1,7 @@
 // Where the v2 UI is: which tab, which item inside it, which overlay.
 import { v2, type Person, type Settings, type TabDef } from './api'
 import { scope, rememberProject, recallProject, type Project } from './project.svelte'
+import { rememberBrand, rememberFaces } from './remembered.svelte'
 import { PACK_TABS } from './packs'
 import { workspace } from '../lib/workspace.svelte'
 
@@ -62,6 +63,11 @@ export function setProject(id: string | null) {
   ui.overlay = null
 }
 
+/** Ask again which projects there are, keeping the open one if it survived. */
+export async function refreshProjects() {
+  await loadProjects()
+}
+
 /** The workspace's projects, and which one was last open here. */
 export async function loadProjects() {
   const w = workspace.activeId
@@ -97,6 +103,9 @@ export async function loadWorkspaceState(meEmail: string | null) {
     const [s, m] = await Promise.all([v2.get<Settings>('/settings'), v2.get<Person[]>('/members')])
     ui.settings = s
     ui.members = m
+    // So the switcher and everyone's face draw at once next time.
+    rememberBrand(workspace.activeId, { name: s.name, logo: s.logo })
+    rememberFaces(m)
     ui.me = (meEmail && m.find((p) => p.email?.toLowerCase() === meEmail.toLowerCase())) || m[0] || null
     const want = (() => {
       try {

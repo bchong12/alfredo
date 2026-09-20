@@ -66,3 +66,15 @@ export function recallProject(ws: string) {
 
 /** Every request carries the open project, so lists and new items match what is on screen. */
 export const projectHeader = (): Record<string, string> => (scope.enabled && scope.id ? { 'x-project': scope.id } : {})
+
+/**
+ * Check the open project against the workspace, and let it go if it is not
+ * there any more. Says whether anything changed, so a call can be run again.
+ */
+export async function forgetProject(): Promise<boolean> {
+  const had = scope.enabled ? scope.id : null
+  if (!had) return false
+  const { refreshProjects } = await import('./state.svelte')
+  await refreshProjects()
+  return (scope.enabled ? scope.id : null) !== had
+}

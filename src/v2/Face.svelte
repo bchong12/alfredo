@@ -1,11 +1,14 @@
 <script lang="ts">
   // A person: their photo when they have one, calm initials when not.
   import { initials, toneFor, type Person } from './api'
+  import { avatarOf } from './remembered.svelte'
   let { person, size = 20, dim = false }: { person: Person | null; size?: number; dim?: boolean } = $props()
+  // A workspace with no photo for them borrows the one they have elsewhere.
+  const photo = $derived(avatarOf(person))
 </script>
 
-{#if person?.avatar}
-  <img class="face" class:dim src={person.avatar} alt={person.name} title={person.name} style:width="{size}px" style:height="{size}px" />
+{#if photo}
+  <img class="face" class:dim src={photo} alt={person?.name} title={person?.name} style:width="{size}px" style:height="{size}px" />
 {:else if person}
   <span
     class="face ini"

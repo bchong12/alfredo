@@ -16,6 +16,7 @@
   import { PACK_TABS } from './packs'
   import { activeWorkspace } from '../lib/workspace.svelte'
   import { scope } from './project.svelte'
+  import { brandOf } from './remembered.svelte'
 
   let { onsearch }: { onsearch: () => void } = $props()
 
@@ -27,8 +28,8 @@
 
 <aside>
   <button class="switcher" class:open={ui.overlay === 'workspaces'} onclick={() => (ui.overlay = ui.overlay === 'workspaces' ? null : 'workspaces')}>
-    <WorkspaceMark name={ui.settings?.name ?? ws?.name ?? ''} logo={ui.settings?.logo ?? null} size={28} />
-    <span class="wsname">{ui.settings?.name ?? ws?.name ?? 'Workspace'}</span>
+    <WorkspaceMark name={ui.settings?.name ?? brandOf(ws?.id ?? '').name ?? ws?.name ?? ''} logo={ui.settings?.logo ?? brandOf(ws?.id ?? '').logo ?? null} size={28} />
+    <span class="wsname">{ui.settings?.name ?? brandOf(ws?.id ?? '').name ?? ws?.name ?? 'Workspace'}</span>
     <ChevronsUpDown size={14} />
   </button>
 

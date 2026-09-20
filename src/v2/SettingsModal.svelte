@@ -1,7 +1,13 @@
+<script module lang="ts">
+  // What Connections last saw. Module scope, so reopening the panel is instant.
+  let lastSnap: any = null
+</script>
+
 <script lang="ts">
   // Settings for the current workspace (and a little for this app).
   import FolderTree from '@lucide/svelte/icons/folder-tree'
   import { scope, PROJECT_COLORS_LIST as PROJECT_COLORS, type Project, type ProjectRole } from './project.svelte'
+  import { rememberBrand, rememberFaces, forgetBrand } from './remembered.svelte'
   import { setProject } from './state.svelte'
   import ConnectDatabase from './ConnectDatabase.svelte'
   import { PACK_TABS } from './packs'
@@ -174,6 +180,7 @@
     if (!name.trim() || name === ui.settings?.name) return
     await saveSettings({ name: name.trim() })
     if (ws) await updateWorkspace(ws.id, { name: name.trim() }).catch(() => {})
+    rememberBrand(ws?.id ?? '', { name: name.trim(), logo: ui.settings?.logo ?? null })
   }
   async function pickLogo(e: Event) {
     const f = (e.currentTarget as HTMLInputElement).files?.[0]
@@ -186,6 +193,7 @@
       confirmRemove = true
       return
     }
+    forgetBrand(ws.id)
     await removeWorkspace(ws.id).catch(fail)
     ui.overlay = null
   }
@@ -251,6 +259,7 @@
   let inviteRole = $state<'member' | 'admin'>('member')
   async function refreshMembers() {
     ui.members = await v2.get<Person[]>('/members')
+    rememberFaces(ui.members)
     if (ui.me) ui.me = ui.members.find((m) => m.id === ui.me!.id) ?? ui.me
   }
   async function uploadFace(e: Event, id: string) {
@@ -297,39 +306,53 @@
     { slug: 'slack', name: 'Slack', blurb: 'Post notes to a channel', logo: 'https://svgl.app/library/slack.svg', google: false },
     { slug: 'github', name: 'GitHub', blurb: 'Issues become cards', logo: 'https://svgl.app/library/github_dark.svg', google: false },
   ]
-  let linked = $state<Record<string, { alias: string; email?: string }[] | null>>({})
-  let composioOk = $state<{ installed: boolean; loggedIn: boolean } | null>(null)
-  async function loadConnections() {
+  type Account = { id: string; alias: string; status: string; email?: string }
+  type Snap = { status: { installed: boolean; loggedIn: boolean; email: string }; accounts: Record<string, Account[]>; checking: boolean }
+  // Kept across openings of this panel, so it draws the moment you land on it.
+  let snap = $state<Snap | null>(lastSnap)
+  const composioOk = $derived(snap?.status ?? null)
+  const accountsFor = (slug: string) => (snap?.accounts?.[slug] ?? []).filter((a) => a.status === 'ACTIVE')
+  /** The account this workspace uses for an app, by alias. */
+  const chosen = (slug: string) => ws?.composio?.[slug] ?? ''
+  // "googlecalendar_carex-basket" is the toolkit and the account; the toolkit
+  // is already the card, so the name is enough.
+  const accountLabel = (a: Account) => a.email ?? a.alias.replace(/^[a-z0-9]+_/, '') ?? a.id
+
+  async function loadConnections(refresh = false) {
     try {
-      composioOk = await api('/api/composio/status')
+      snap = await api<Snap>(`/api/composio/all${refresh ? '?refresh=1' : ''}`)
+      lastSnap = snap
+      // A stale answer comes back at once and the real one follows.
+      if (snap.checking) setTimeout(() => loadConnections(), 2500)
     } catch {
-      composioOk = { installed: false, loggedIn: false }
+      snap = { status: { installed: false, loggedIn: false, email: '' }, accounts: {}, checking: false }
     }
-    if (!composioOk?.loggedIn) return
-    await Promise.all(
-      APPS.map(async (a) => {
-        linked[a.slug] = null
-        try {
-          const rows = await api<{ alias: string; status: string; email?: string }[]>(`/api/composio/accounts?toolkit=${a.slug}`)
-          linked[a.slug] = rows.filter((r) => r.status === 'ACTIVE')
-        } catch {
-          linked[a.slug] = []
-        }
-      }),
-    )
   }
-  let connectionsLoaded = false
   $effect(() => {
-    if (ui.settingsPage === 'connections' && !connectionsLoaded) {
-      connectionsLoaded = true
-      loadConnections()
-    }
+    if (ui.settingsPage === 'connections') untrack(() => loadConnections())
   })
+
+  /** Which account this workspace uses for an app. Each workspace picks its own. */
+  async function useAccount(slug: string, alias: string) {
+    if (alias === '__new') return link(slug)
+    const next = { ...(ws?.composio ?? {}) }
+    if (alias) next[slug] = alias
+    else delete next[slug]
+    try {
+      await updateWorkspace(ws!.id, { composio: next })
+      flash(alias ? 'This workspace will use that account' : 'Disconnected here')
+    } catch (e) {
+      fail(e)
+    }
+  }
+
   async function link(slug: string) {
     try {
-      const r = await post<{ url: string }>('/api/composio/link', { toolkit: slug })
+      // The alias says which workspace asked, so accounts stay apart.
+      const r = await post<{ url: string }>('/api/composio/link', { toolkit: slug, alias: ws?.id })
       window.open(r.url, '_blank')
-      flash('Finish signing in in your browser, then reopen this page')
+      flash('Finish signing in in your browser, then come back')
+      setTimeout(() => loadConnections(true), 4000)
     } catch (e) {
       fail(e)
     }
@@ -647,7 +670,10 @@
         <div class="lab" style:margin-top="12px"><b>Connect another workspace</b></div>
         <ConnectDatabase onconnected={() => (ui.overlay = null)} />
       {:else if ui.settingsPage === 'connections'}
-        <p class="lead">Bring your email, calendar and tools into {ui.settings?.name}. Powered by Composio; each person signs in with their own account.</p>
+        <p class="lead">
+          Bring your email, calendar and tools into {ui.settings?.name}. Each workspace picks which account it uses, so work and side projects stay apart.
+          {#if snap?.checking}<span class="s"> Checking…</span>{/if}
+        </p>
         {#if composioOk && !composioOk.loggedIn}
           <p class="err">Composio is not {composioOk.installed ? 'logged in' : 'installed'} on this Mac. Run <span class="mono">composio login</span> in a terminal, then reopen this page.</p>
         {/if}
@@ -655,14 +681,17 @@
           <span class="g2">{google ? 'Google Workspace' : 'More'}</span>
           <div class="apps">
             {#each APPS.filter((a) => a.google === google) as a (a.slug)}
-              {@const acc = linked[a.slug]}
-              <div class="app" class:on={acc && acc.length}>
-                <span class="al"><img src={a.logo} alt="" /></span>
-                <div class="dbt grow"><span class="h">{a.name}</span><span class="s">{acc && acc.length ? (acc[0].email ?? acc[0].alias) : a.blurb}</span></div>
-                {#if acc === null}
-                  <span class="s">…</span>
-                {:else if acc && acc.length}
-                  <span class="ok"><i></i>Connected</span>
+              {@const rows = accountsFor(a.slug)}
+              {@const here = chosen(a.slug)}
+              <div class="app" class:on={!!here}>
+                <span class="al"><img src={a.logo} alt="" loading="lazy" /></span>
+                <div class="dbt grow"><span class="h">{a.name}</span><span class="s">{a.blurb}</span></div>
+                {#if rows.length}
+                  <select class="field small" title="Which account this workspace uses" value={here} onchange={(e) => useAccount(a.slug, e.currentTarget.value)}>
+                    <option value="">Not here</option>
+                    {#each rows as acc (acc.alias || acc.id)}<option value={acc.alias || acc.id}>{accountLabel(acc)}</option>{/each}
+                    <option value="__new">Connect another…</option>
+                  </select>
                 {:else}
                   <button class="ghost" onclick={() => link(a.slug)}>Connect</button>
                 {/if}
@@ -1309,6 +1338,20 @@
   .app {
     width: calc(50% - 5px);
     box-sizing: border-box;
+    gap: 10px;
+  }
+  /* The name never wraps because an account name is long. */
+  .app .dbt {
+    min-width: 0;
+  }
+  .app .h,
+  .app .s {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .app select {
+    max-width: 150px;
   }
   .al {
     width: 34px;

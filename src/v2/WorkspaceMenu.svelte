@@ -5,6 +5,7 @@
   import WorkspaceMark from './WorkspaceMark.svelte'
   import { workspace, pick } from '../lib/workspace.svelte'
   import { ui, openSettings } from './state.svelte'
+  import { brandOf } from './remembered.svelte'
 
   let { onadd }: { onadd: () => void } = $props()
 
@@ -23,8 +24,8 @@
         ui.overlay = null
       }}
     >
-      <WorkspaceMark name={w.name} logo={w.id === workspace.activeId ? (ui.settings?.logo ?? null) : null} size={26} />
-      <span class="meta"><span class="name">{w.name}</span><span class="sub">{where(w.kind)}</span></span>
+      <WorkspaceMark name={brandOf(w.id).name ?? w.name} logo={(w.id === workspace.activeId ? ui.settings?.logo : null) ?? brandOf(w.id).logo ?? null} size={26} />
+      <span class="meta"><span class="name">{brandOf(w.id).name ?? w.name}</span><span class="sub">{where(w.kind)}</span></span>
       {#if w.id === workspace.activeId}<Check size={14} />{/if}
     </button>
   {/each}

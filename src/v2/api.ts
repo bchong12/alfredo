@@ -1,7 +1,7 @@
 // The v2 API: the same calls whatever database the workspace lives in, and
 // whichever project is open (every call carries it; see project.svelte.ts).
 import { api, post } from '../lib/session.svelte'
-import { projectHeader } from './project.svelte'
+import { projectHeader, forgetProject } from './project.svelte'
 
 export type Status = 'todo' | 'progress' | 'review' | 'done'
 export const STATUSES: { id: Status; label: string }[] = [
@@ -42,12 +42,28 @@ export type Settings = { name?: string; logo?: string | null; tabs: TabDef[]; cy
 export type InProject = { project?: string | null }
 
 const P = '/api/v2'
+
+/**
+ * A project can go away while the app still has it open (someone removed it,
+ * or your access to it). The workspace should not jam on that: forget it,
+ * open another, and run the call again.
+ */
+async function withProject<T>(run: () => Promise<T>): Promise<T> {
+  try {
+    return await run()
+  } catch (e) {
+    const status = (e as Error).message.match(/\((\d{3})\)/)?.[1]
+    if ((status === '404' || status === '403') && (await forgetProject())) return run()
+    throw e
+  }
+}
+
 export const v2 = {
-  get: <T>(path: string) => api<T>(P + path, projectHeader()),
-  post: <T>(path: string, body: unknown = {}) => post<T>(P + path, body, 'POST', projectHeader()),
-  put: <T>(path: string, body: unknown) => post<T>(P + path, body, 'PUT', projectHeader()),
-  patch: <T>(path: string, body: unknown) => post<T>(P + path, body, 'PATCH', projectHeader()),
-  del: <T>(path: string) => post<T>(P + path, {}, 'DELETE', projectHeader()),
+  get: <T>(path: string) => withProject(() => api<T>(P + path, projectHeader())),
+  post: <T>(path: string, body: unknown = {}) => withProject(() => post<T>(P + path, body, 'POST', projectHeader())),
+  put: <T>(path: string, body: unknown) => withProject(() => post<T>(P + path, body, 'PUT', projectHeader())),
+  patch: <T>(path: string, body: unknown) => withProject(() => post<T>(P + path, body, 'PATCH', projectHeader())),
+  del: <T>(path: string) => withProject(() => post<T>(P + path, {}, 'DELETE', projectHeader())),
 }
 
 /** "4m ago", "Yesterday", "Sep 12". */

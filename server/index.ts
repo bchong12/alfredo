@@ -322,6 +322,13 @@ app.get('/api/workspaces/:id/status', async (c) => {
 })
 
 /* --- Composio: connections per workspace, and automations ------------------ */
+/* Everything the Connections panel draws, in one answer: whether Composio is
+ * here, and every app's accounts. Cached, so the panel opens at once. */
+app.get('/api/composio/all', async (c) => {
+  if (PUBLIC) return c.json({ status: { installed: false, loggedIn: false, email: '' }, accounts: {}, at: 0, checking: false, toolkits: [] })
+  const snap = await composio.snapshot(c.req.query('refresh') === '1')
+  return c.json({ ...snap, toolkits: composio.TOOLKITS })
+})
 app.get('/api/composio/status', async (c) => {
   if (PUBLIC) return c.json({ installed: false, loggedIn: false, email: '' })
   return c.json({ ...(await composio.status()), toolkits: composio.TOOLKITS })
@@ -340,6 +347,8 @@ app.post('/api/composio/link', async (c) => {
   if (PUBLIC) return c.json({ error: 'not available' }, 404)
   const { toolkit, alias } = await c.req.json<{ toolkit: string; alias?: string }>()
   try {
+    // A fresh account should show up in the panel as soon as it exists.
+    composio.invalidate()
     return c.json(await composio.linkUrl(toolkit.replace(/[^a-z0-9_]/gi, ''), alias?.replace(/[^a-z0-9_-]/gi, '')))
   } catch (e) {
     return c.json({ error: (e as Error).message }, 500)

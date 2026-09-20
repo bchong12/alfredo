@@ -1298,8 +1298,11 @@ export function v2Routes(current: () => { workspace: Workspace; db: unknown } | 
   async function guard(c: any) {
     const p = projectOf(c)
     if (!p || p === NO_PROJECT) return null
-    const { allowed } = await mine(c)
-    return allowed.some((x) => x.id === p) ? null : c.json({ error: 'You do not have access to that project.' }, 403)
+    const { all, allowed } = await mine(c)
+    if (allowed.some((x) => x.id === p)) return null
+    // A project that is gone is not a refusal: the app should forget it.
+    if (!all.some((x) => x.id === p)) return c.json({ error: 'That project no longer exists.', gone: true }, 404)
+    return c.json({ error: 'You do not have access to that project.' }, 403)
   }
   /** Which cards count for a project (or for the work in no project). */
   async function cardFilter(st: Store, p: string) {
@@ -1328,11 +1331,11 @@ export function v2Routes(current: () => { workspace: Workspace; db: unknown } | 
     if (asked) return asked
     const person = c.get?.('person') as { id: string; email: string } | undefined
     const people = await store().members()
-    // A workspace with no admins yet (a fresh local folder) is run by whoever is at it.
-    const admins = people.filter((p) => p.role === 'admin')
+    // A workspace nobody has been made admin of yet is run by whoever is in
+    // it: someone has to be able to hand out the first roles.
+    const settled = people.some((p) => p.role === 'admin')
     const mine = person?.email ? people.find((p) => p.email?.toLowerCase() === person.email.toLowerCase()) : null
-    if (!mine) return { id: null, admin: !admins.length || !person?.email }
-    return { id: mine.id, admin: mine.role === 'admin' }
+    return { id: mine?.id ?? null, admin: !settled || mine?.role === 'admin' }
   }
   /** The projects this person may open, and what they may do in each. */
   async function mine(c: any) {
