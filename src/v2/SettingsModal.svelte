@@ -7,6 +7,7 @@
   // Settings for the current workspace (and a little for this app).
   import Select from './Select.svelte'
   import FolderTree from '@lucide/svelte/icons/folder-tree'
+  import BrainIcon from '@lucide/svelte/icons/brain'
   import { scope, PROJECT_COLORS_LIST as PROJECT_COLORS, type Project, type ProjectRole } from './project.svelte'
   import { rememberBrand, rememberFaces, forgetBrand } from './remembered.svelte'
   import { setProject } from './state.svelte'
@@ -360,6 +361,27 @@
   }
 
   // --- models --------------------------------------------------------------------
+  type Brain = { model: string; downloaded: boolean; chunks: number; progress: { state: string; done: number; total: number; error?: string } }
+  let brain = $state<Brain | null>(null)
+  let watching: ReturnType<typeof setTimeout> | undefined
+  async function loadBrain() {
+    brain = await v2.get<Brain>('/brain').catch(() => brain)
+    clearTimeout(watching)
+    // While it reads, keep the count moving.
+    if (brain?.progress?.state === 'running') watching = setTimeout(loadBrain, 1200)
+  }
+  async function readWorkspaceIn() {
+    try {
+      await v2.post('/brain/read', {})
+      await loadBrain()
+    } catch (e) {
+      fail(e)
+    }
+  }
+  $effect(() => {
+    if (ui.settingsPage === 'models') untrack(() => loadBrain())
+  })
+
   let engine = $state<{ parakeet: boolean } | null>(null)
   v2.get<{ parakeet: boolean }>('/transcribe/engine').then((e) => (engine = e)).catch(() => {})
 </script>
@@ -751,6 +773,36 @@
         {#if engine && !engine.parakeet}
           <p class="note">Install it once with <span class="mono">sh scripts/build-parakeet.sh</span> (needs Xcode command line tools, a few minutes), then reopen Alfredo.</p>
         {/if}
+
+        <section>
+          <div class="opt col">
+            <div class="row">
+              <div class="dbi"><BrainIcon size={15} /></div>
+              <div class="dbt grow">
+                <span class="h">The workspace, read in</span>
+                <span class="s">
+                  Everything written down here, cut into passages and turned into numbers on this Mac, so ⌘K can answer questions from it. Claude Code writes the answers; nothing is sent anywhere.
+                </span>
+              </div>
+              {#if brain}
+                <span class="ok" class:bad={!brain.chunks}><i></i>{brain.chunks ? `${brain.chunks} passages` : 'Not read yet'}</span>
+              {/if}
+            </div>
+            <div class="form">
+              <div>
+                <button class="primary" disabled={brain?.progress?.state === 'running'} onclick={readWorkspaceIn}>
+                  {brain?.progress?.state === 'running' ? `Reading… ${brain.progress.done}/${brain.progress.total}` : brain?.chunks ? 'Read it again' : 'Read the workspace in'}
+                </button>
+              </div>
+              {#if brain?.progress?.state === 'running'}<div class="prog"><i style:width="{brain.progress.total ? (brain.progress.done / brain.progress.total) * 100 : 5}%"></i></div>{/if}
+              {#if brain?.progress?.state === 'failed'}<p class="err">{brain.progress.error}</p>{/if}
+              <p class="note">
+                {brain?.downloaded ? `Model: ${brain.model}, on this Mac.` : `Model: ${brain?.model ?? 'bge-small'}, about 34 MB, downloaded the first time you read a workspace in.`}
+                New work is read in as it is saved; this is for everything that came before.
+              </p>
+            </div>
+          </div>
+        </section>
       {:else if ui.settingsPage === 'appearance'}
         <div class="seg">
           {#each ['dark', 'light', 'system'] as t}
@@ -1010,6 +1062,23 @@
   }
   .grow {
     flex: 1;
+  }
+  .prog {
+    height: 4px;
+    border-radius: 2px;
+    background: var(--line);
+    overflow: hidden;
+  }
+  .prog i {
+    display: block;
+    height: 100%;
+    background: var(--ink);
+    transition: width 0.3s ease;
+  }
+  .form {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
   }
   .plist {
     display: flex;

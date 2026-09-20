@@ -23,6 +23,10 @@ Nothing is hosted by us. Keys and tokens live in the macOS keychain.
   Flow, React Flow JSON compatible).
 - **Meetings**: record, transcribe on this Mac with Parakeet, and get notes
   written by Claude Code. Only the transcript is kept; the audio is deleted.
+- **Ask it things**: ⌘K takes a question as well as a name. Everything written
+  down in the workspace is searched, and Claude Code answers from the passages
+  it found, saying which doc or meeting each claim came from. Nothing leaves
+  the Mac.
 - **Tabs you choose**: every workspace has a tabs JSON in its own database.
   Rename, hide or add tabs; teams can add their own tab types as packs.
 - **Projects** (optional): split one workspace into separate boards, docs,
@@ -78,6 +82,8 @@ the active one. Tools:
 | `ws_list`, `ws_read`, `ws_write` | Cards, docs, canvases, meetings, members |
 | `get_workspace`, `set_workspace_tabs` | The workspace's name and tabs JSON |
 | `list_pack_data`, `get_pack_data`, `set_pack_data` | Data for custom tab types |
+| `ask_workspace`, `search_workspace` | Answer from the workspace's own writing, with citations |
+| `read_workspace_in`, `brain_status` | Read everything in, and see how it went |
 | `list_projects`, `create_project`, `set_project_people`, `move_to_project`, `set_projects_enabled` | Projects, and who is in them |
 | `invite_person` | An invite link to send someone |
 | `list_supabase_projects`, `connect_supabase` | Add a Supabase workspace |
@@ -95,6 +101,28 @@ and Claude does the rest.
 - Cloudflare: `cloudflare/worker.mjs` and `cloudflare/schema.sql`. The Worker
   is the only door to D1 and checks a random token kept in your keychain.
 - This Mac: the same schema in PGlite (Postgres in WebAssembly).
+
+### Asking the workspace
+
+Every doc, meeting, card and canvas is cut into passages and embedded on this
+Mac with `bge-small-en-v1.5` (int8, 384 dimensions, about 34 MB, downloaded on
+first use). Searching runs both halves and fuses them by reciprocal rank:
+vectors for what a question means, words for the exact term vectors miss. The
+answer is written by Claude Code from those passages only, and there is no
+hosted fallback, because a company's own writing should not leave the machine.
+
+Retrieval quality comes from the chunking rather than the model: pieces follow
+the writing's own headings, overlap a little, and carry the title and heading
+path so a passage still says what it is about.
+
+- **Supabase**: a `chunks` table with pgvector and Postgres full-text, under
+  the same row-level security as the work itself.
+- **Cloudflare**: vectors stored in D1, scored by the Worker, which only ever
+  looks at what the caller may open.
+- **This Mac**: the same, through PGlite with pgvector.
+
+New work is read in as it is saved. Everything from before is read in once
+from Settings, Models (or `read_workspace_in` over MCP).
 
 ### Projects and who may open them
 

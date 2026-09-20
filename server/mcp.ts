@@ -8,6 +8,8 @@ import { storeFor, mondayOf, tabsProblem, PACK_KEY, PROJECT_COLORS, STATUSES as 
 import { randomUUID } from 'node:crypto'
 import * as wsReg from './workspaces'
 import { inviteLink } from './invite-link'
+import { ask, findPassages, indexProgress, reindex } from './knowledge'
+import { embedderState } from './embed'
 import * as connect from './connect'
 import * as cfDeploy from './cloudflare-deploy'
 import { schemaSql } from './supabase-connect'
@@ -32,6 +34,9 @@ its own database (a folder on this Mac, a Supabase project, or a Cloudflare D1).
 Every call lands on one workspace, chosen by the x-workspace header this
 connection was opened with; list_workspaces shows them all.
 
+- Ask it things: ask_workspace answers from everything this workspace has
+  written down, with citations; search_workspace hands back the passages. Ask
+  before answering anything about how this team works or what was decided.
 - Read and write: ws_list, ws_read, ws_write (cards, docs, canvases, meetings, members).
 - Shape the workspace: get_workspace, set_workspace_tabs (the tabs JSON), pack data tools.
 - Projects (optional, per workspace): list_projects, create_project, move_to_project,
@@ -65,6 +70,7 @@ connecting a database, and never repeat back tokens or keys.`,
   // only work on folder and Supabase workspaces.
 
   const ws = () => storeFor(current())
+  const currentWorkspaceId = () => current()?.workspace.id ?? ''
 
   add(
     'get_workspace',
@@ -92,6 +98,42 @@ connecting a database, and never repeat back tokens or keys.`,
     async ({ tabs }) => {
       const problem = tabsProblem(tabs)
       return problem ? fail(new Error(problem)) : ok(await ws().saveSettings({ tabs }))
+    },
+  )
+
+  // ------------------------------------------------------------- the brain
+  // Everything the workspace has written down, in a form a question reaches.
+  // The search runs as this connection's workspace and person, so it can only
+  // find what they could open themselves.
+
+  add(
+    'ask_workspace',
+    "Answer a question from this workspace's own docs, meetings, cards and canvases. Use it before answering anything about how this team works, what was decided, or who owns what: the workspace is the source, not your own memory. Comes back with the answer and what it was taken from.",
+    { question: z.string().min(3), depth: z.number().optional().describe('How many passages to weigh, 4 to 30. Default 14.') },
+    async ({ question, depth }) => ok(await ask(ws(), question, Math.min(Math.max(Number(depth) || 14, 4), 30))),
+  )
+
+  add(
+    'search_workspace',
+    'The passages behind an answer, without writing one: the best matching pieces of docs, meetings, cards and canvases, each with where it came from. Use it when you want the raw material rather than a summary.',
+    { query: z.string().min(2), limit: z.number().optional() },
+    async ({ query, limit }) => ok(await findPassages(ws(), query, Math.min(Math.max(Number(limit) || 10, 1), 30))),
+  )
+
+  add(
+    'read_workspace_in',
+    'Read the whole workspace in, so questions can reach it. Needed once per workspace, and again only if something was written outside Alfredo. Returns at once; call brain_status to watch it.',
+    {},
+    async () => ok(reindex(ws(), currentWorkspaceId())),
+  )
+
+  add(
+    'brain_status',
+    'Whether this workspace has been read in: the model, how many passages are stored, and how a reading is going.',
+    {},
+    async () => {
+      const chunks = await ws().chunkCount().catch(() => 0)
+      return ok({ ...embedderState(), chunks, progress: indexProgress(currentWorkspaceId()) })
     },
   )
 

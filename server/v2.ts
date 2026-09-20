@@ -16,6 +16,8 @@ import { supabaseFor, type Workspace } from './workspaces'
 import { inviteLink } from './invite-link'
 import { unlink } from 'node:fs/promises'
 import { randomUUID, randomBytes, createHash } from 'node:crypto'
+import { toVector, embedderState, readyEmbedder } from './embed'
+import { ask, findPassages, forget, indexProgress, reindex, touch } from './knowledge'
 import * as audio from './audio'
 import { transcribe } from './ai-local'
 import { summarize, hasLocalChat, teamContext, type Summary } from './ai'
@@ -111,6 +113,10 @@ export type Invite = {
   usedAt?: string | null
 }
 export type ItemKind = 'card' | 'doc' | 'canvas' | 'meeting'
+/** One piece of the workspace's writing, and the vector of it. */
+export type ChunkRow = { ord: number; title: string; heading: string; text: string; embedding: number[] }
+/** What a search found, and where it came from. */
+export type Hit = { kind: ItemKind; itemId: string; ord: number; title: string; heading: string; text: string; score: number }
 /** Who is asking: their row in this workspace's people, and whether they run it. */
 export type Viewer = { id: string | null; admin: boolean }
 
@@ -176,6 +182,11 @@ export interface Store {
   packKeys(): Promise<{ key: string; updatedAt: string; bytes: number }[]>
   /** Who the database says is asking, where it keeps its own people. */
   viewer?(): Promise<Viewer | null>
+  /** What the workspace knows, in a form a question can reach. */
+  putChunks(kind: ItemKind, itemId: string, rows: ChunkRow[]): Promise<void>
+  dropChunks(kind: ItemKind, itemId: string): Promise<void>
+  searchChunks(q: { vector: number[]; text: string; limit: number }): Promise<Hit[]>
+  chunkCount(): Promise<number>
   projects(): Promise<Project[]>
   saveProjects(list: Project[]): Promise<void>
   /** Pending and spent invitations. */
@@ -589,6 +600,37 @@ class SqlStore implements Store {
     return rows.map((r) => ({ key: r.key, updatedAt: r.updated_at, bytes: JSON.stringify(r.value).length })).sort((a, b) => a.key.localeCompare(b.key))
   }
 
+  async putChunks(kind: ItemKind, itemId: string, rows: ChunkRow[]) {
+    await q(db.from('chunks').delete().eq('kind', kind).eq('item_id', itemId))
+    if (!rows.length) return
+    await q(
+      db.from('chunks').insert(
+        rows.map((r) => ({
+          kind,
+          item_id: itemId,
+          ord: r.ord,
+          title: r.title,
+          heading: r.heading,
+          text: r.text,
+          // PostgREST takes the vector as its own literal.
+          embedding: toVector(r.embedding),
+          updated_at: new Date().toISOString(),
+        })),
+      ),
+    )
+  }
+  async dropChunks(kind: ItemKind, itemId: string) {
+    await q(db.from('chunks').delete().eq('kind', kind).eq('item_id', itemId))
+  }
+  async searchChunks({ vector, text, limit }: { vector: number[]; text: string; limit: number }): Promise<Hit[]> {
+    const rows = await q<any[]>(db.rpc('alfredo_search', { q_embedding: toVector(vector), q_text: text, k: limit }))
+    return (rows ?? []).map((r) => ({ kind: r.kind, itemId: r.item_id, ord: r.ord, title: r.title, heading: r.heading, text: r.text, score: Number(r.score) }))
+  }
+  async chunkCount() {
+    const rows = await q<any[]>(db.from('chunks').select('id'))
+    return rows.length
+  }
+
   async projects(): Promise<Project[]> {
     const [rows, members] = await Promise.all([
       q<any[]>(db.from('projects').select('*').order('position')),
@@ -988,6 +1030,25 @@ class CloudflareStore implements Store {
     }
   }
 
+  async putChunks(kind: ItemKind, itemId: string, rows: ChunkRow[]) {
+    const live = await this.tryWorker('/chunks', {
+      method: 'PUT',
+      body: { kind, itemId, chunks: rows.map((r) => ({ ...r, embedding: Array.from(r.embedding) })) },
+    })
+    if (!live) throw new Error('This Worker is older than questions are. Redeploy it from Settings > Database.')
+  }
+  async dropChunks(kind: ItemKind, itemId: string) {
+    await this.tryWorker('/chunks', { method: 'DELETE', body: { kind, itemId } })
+  }
+  async searchChunks(q: { vector: number[]; text: string; limit: number }): Promise<Hit[]> {
+    const live = await this.tryWorker<Hit[]>('/chunks/search', { method: 'POST', body: { vector: Array.from(q.vector), text: q.text, limit: q.limit } })
+    return live ?? []
+  }
+  async chunkCount() {
+    const live = await this.tryWorker<{ count: number }>('/chunks/count')
+    return live?.count ?? 0
+  }
+
   /** The Worker knows its own people, so it says who this is. */
   async viewer(): Promise<Viewer | null> {
     const s = await this.api.call<{ user: { id: string; role: string } | null }>('/session').catch(() => null)
@@ -1356,6 +1417,56 @@ export function v2Routes(current: () => { workspace: Workspace; db: unknown } | 
     members: me.admin ? p.members : undefined,
   })
 
+  /**
+   * The company brain. Everything written down, in a form a question can
+   * reach, and an answer that says which piece of work it came from.
+   */
+  const learn = (kind: ItemKind, id: string) => touch(store(), kind, id, current()?.workspace.id ?? '')
+
+  app.get('/brain', async (c) => {
+    const st = store()
+    const chunks = await st.chunkCount().catch(() => 0)
+    return c.json({ ...embedderState(), chunks, progress: indexProgress(current()?.workspace.id ?? '') })
+  })
+  app.post('/brain/read', async (c) => {
+    const { me } = await mine(c)
+    if (!me.admin) return c.json({ error: 'Only an admin can read the whole workspace in.' }, 403)
+    return c.json(reindex(store(), current()?.workspace.id ?? ''))
+  })
+  app.post('/brain/model', async (c) => c.json(await readyEmbedder()))
+  /**
+   * An answer is about what is in front of you: inside a project, only that
+   * project's work is weighed. The database refuses what you may not see
+   * anyway; this keeps the answer honest for an admin, who may see it all.
+   */
+  const keepInView = async (c: any, hits: Hit[]) => {
+    const p = projectOf(c)
+    const [map, { me, allowed }, set] = await Promise.all([mapOf(store()), mine(c), store().settings()])
+    const ok = new Set(allowed.map((x) => x.id))
+    const unfiledIsMine = !set.projects?.enabled || me.admin
+    return hits.filter((h) => {
+      const inP = map[`${h.kind}:${h.itemId}`]
+      if (p === NO_PROJECT) return !inP
+      if (p) return inP === p
+      return inP ? ok.has(inP) : unfiledIsMine
+    })
+  }
+
+  app.post('/ask', async (c) => {
+    const b = await c.req.json<{ question?: string; limit?: number }>()
+    const question = (b.question ?? '').trim()
+    if (!question) return c.json({ error: 'Ask something.' }, 400)
+    const limit = Math.min(Math.max(Number(b.limit) || 14, 4), 30)
+    return c.json(await ask(store(), question, limit, (hits) => keepInView(c, hits)))
+  })
+  app.post('/ask/passages', async (c) => {
+    const b = await c.req.json<{ question?: string; limit?: number }>()
+    const question = (b.question ?? '').trim()
+    if (!question) return c.json([])
+    const limit = Math.min(Math.max(Number(b.limit) || 10, 1), 30)
+    return c.json(await keepInView(c, await findPassages(store(), question, limit)))
+  })
+
   app.get('/projects', async (c) => {
     const st = store()
     const [set, { me, allowed }] = await Promise.all([st.settings(), mine(c)])
@@ -1527,19 +1638,24 @@ export function v2Routes(current: () => { workspace: Workspace; db: unknown } | 
     if (denied) return denied
     const b = await c.req.json<{ title: string; status?: Status; week?: string }>()
     if (!b.title?.trim()) return c.json({ error: 'Give the card a title.' }, 400)
-    return c.json(await placed(c, 'card', await store().createCard({ title: b.title.trim(), status: STATUSES.includes(b.status!) ? b.status : 'todo', week: weekParam(b.week) })))
+    const made = await placed(c, 'card', await store().createCard({ title: b.title.trim(), status: STATUSES.includes(b.status!) ? b.status : 'todo', week: weekParam(b.week) }))
+    learn('card', made.id)
+    return c.json(made)
   })
   app.patch('/cards/:id', async (c) => {
     const denied = await guardWrite(c, 'card', c.req.param('id'))
     if (denied) return denied
     const b = await c.req.json<Record<string, any>>()
     if (b.week !== undefined) b.week = weekParam(b.week) ?? 'backlog'
-    return c.json(await one('card', await store().updateCard(c.req.param('id'), b)))
+    const card = await one('card', await store().updateCard(c.req.param('id'), b))
+    learn('card', card.id)
+    return c.json(card)
   })
   app.delete('/cards/:id', async (c) => {
     const denied = await guardWrite(c, 'card', c.req.param('id'))
     if (denied) return denied
     await store().deleteCard(c.req.param('id'))
+    await forget(store(), 'card', c.req.param('id'))
     return c.json({ ok: true })
   })
 
@@ -1549,9 +1665,17 @@ export function v2Routes(current: () => { workspace: Workspace; db: unknown } | 
     const denied = await guardWrite(c, 'doc')
     if (denied) return denied
     const b = await c.req.json<{ title?: string; body?: string }>()
-    return c.json(await placed(c, 'doc', await store().createDoc(b.title?.trim() || 'Untitled', b.body ?? '')))
+    const doc = await placed(c, 'doc', await store().createDoc(b.title?.trim() || 'Untitled', b.body ?? ''))
+    learn('doc', doc.id)
+    return c.json(doc)
   })
-  app.put('/docs/:id', async (c) => (await guardWrite(c, 'doc', c.req.param('id'))) ?? c.json(await store().saveDoc(c.req.param('id'), await c.req.json())))
+  app.put('/docs/:id', async (c) => {
+    const denied = await guardWrite(c, 'doc', c.req.param('id'))
+    if (denied) return denied
+    const saved = await store().saveDoc(c.req.param('id'), await c.req.json())
+    learn('doc', saved.id)
+    return c.json(saved)
+  })
 
   app.get('/canvases', async (c) => (await guard(c)) ?? c.json(await scoped(c, 'canvas', await store().canvases())))
   app.get('/canvases/:id', async (c) => c.json(await one('canvas', await store().canvas(c.req.param('id')))))
@@ -1559,9 +1683,17 @@ export function v2Routes(current: () => { workspace: Workspace; db: unknown } | 
     const denied = await guardWrite(c, 'canvas')
     if (denied) return denied
     const b = await c.req.json<{ title?: string }>()
-    return c.json(await placed(c, 'canvas', await store().createCanvas(b.title?.trim() || 'Untitled canvas')))
+    const canvas = await placed(c, 'canvas', await store().createCanvas(b.title?.trim() || 'Untitled canvas'))
+    learn('canvas', canvas.id)
+    return c.json(canvas)
   })
-  app.put('/canvases/:id', async (c) => (await guardWrite(c, 'canvas', c.req.param('id'))) ?? c.json(await store().saveCanvas(c.req.param('id'), await c.req.json())))
+  app.put('/canvases/:id', async (c) => {
+    const denied = await guardWrite(c, 'canvas', c.req.param('id'))
+    if (denied) return denied
+    const saved = await store().saveCanvas(c.req.param('id'), await c.req.json())
+    learn('canvas', saved.id)
+    return c.json(saved)
+  })
 
   app.get('/meetings', async (c) => (await guard(c)) ?? c.json(await scoped(c, 'meeting', await store().meetings())))
   app.get('/meetings/:id', async (c) => c.json(await one('meeting', await store().meeting(c.req.param('id')))))
@@ -1569,15 +1701,26 @@ export function v2Routes(current: () => { workspace: Workspace; db: unknown } | 
     const denied = await guardWrite(c, 'meeting')
     if (denied) return denied
     const b = await c.req.json<{ title?: string; transcript?: string; notes?: string; startedAt?: string; durationS?: number }>()
-    return c.json(await placed(c, 'meeting', await store().createMeeting({ ...b, title: b.title?.trim() || 'Meeting' })))
+    const meeting = await placed(c, 'meeting', await store().createMeeting({ ...b, title: b.title?.trim() || 'Meeting' }))
+    learn('meeting', meeting.id)
+    return c.json(meeting)
   })
-  app.put('/meetings/:id', async (c) => (await guardWrite(c, 'meeting', c.req.param('id'))) ?? c.json(await store().saveMeeting(c.req.param('id'), await c.req.json())))
+  app.put('/meetings/:id', async (c) => {
+    const denied = await guardWrite(c, 'meeting', c.req.param('id'))
+    if (denied) return denied
+    const saved = await store().saveMeeting(c.req.param('id'), await c.req.json())
+    learn('meeting', saved.id)
+    return c.json(saved)
+  })
 
   for (const kind of ['docs', 'canvases', 'meetings'] as const) {
     app.delete(`/${kind}/:id`, async (c) => {
-      const denied = await guardWrite(c, kind === 'docs' ? 'doc' : kind === 'canvases' ? 'canvas' : 'meeting', c.req.param('id'))
+      // `one` is taken by the helper above; this is the singular of the tab.
+      const single: ItemKind = kind === 'docs' ? 'doc' : kind === 'canvases' ? 'canvas' : 'meeting'
+      const denied = await guardWrite(c, single, c.req.param('id'))
       if (denied) return denied
       await store().remove(kind, c.req.param('id'))
+      await forget(store(), single, c.req.param('id'))
       return c.json({ ok: true })
     })
   }

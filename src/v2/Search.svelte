@@ -1,6 +1,10 @@
 <script lang="ts">
-  // ⌘K: find any card, doc, canvas or meeting in this workspace.
+  // ⌘K: find any card, doc, canvas or meeting in this workspace, or ask it a
+  // question. Asking searches everything written down and has Claude Code
+  // answer from the passages, on this Mac, saying what each claim came from.
   import Search from '@lucide/svelte/icons/search'
+  import Sparkles from '@lucide/svelte/icons/sparkles'
+  import CornerDownLeft from '@lucide/svelte/icons/corner-down-left'
   import FileText from '@lucide/svelte/icons/file-text'
   import Columns3 from '@lucide/svelte/icons/columns-3'
   import Shapes from '@lucide/svelte/icons/shapes'
@@ -9,10 +13,33 @@
   import { ui, go } from './state.svelte'
 
   let { onclose }: { onclose: () => void } = $props()
-  type Hit = { kind: 'card' | 'doc' | 'canvas' | 'meeting'; id: string; title: string; sub: string }
+  type Kind = 'card' | 'doc' | 'canvas' | 'meeting'
+  type Hit = { kind: Kind; id: string; title: string; sub: string }
+  type Citation = { kind: Kind; itemId: string; title: string; heading?: string }
+  type Answer = { answer: string; citations: Citation[]; used: number; model: string }
   let all = $state<Hit[]>([])
   let q = $state('')
   let idx = $state(0)
+  let asking = $state(false)
+  let answer = $state<Answer | null>(null)
+  let askError = $state('')
+
+  /** A question, rather than a name to find. */
+  const looksLikeQuestion = $derived(/\?\s*$/.test(q) || /^(who|what|when|where|why|how|did|do|does|is|are|can|should|which)\b/i.test(q.trim()))
+
+  async function askIt() {
+    const question = q.trim()
+    if (!question || asking) return
+    asking = true
+    answer = null
+    askError = ''
+    try {
+      answer = await v2.post<Answer>('/ask', { question })
+    } catch (e) {
+      askError = (e as Error).message
+    }
+    asking = false
+  }
 
   const tabOf = (type: string) => ui.settings?.tabs.find((t) => t.type === type && !t.hidden)?.id ?? type
   Promise.allSettled([
@@ -48,17 +75,47 @@
       <!-- svelte-ignore a11y_autofocus -->
       <input
         autofocus
-        placeholder="Search cards, docs, canvases and meetings"
+        placeholder="Search, or ask this workspace a question"
         bind:value={q}
         oninput={() => (idx = 0)}
         onkeydown={(e) => {
           if (e.key === 'ArrowDown') ((idx = Math.min(idx + 1, shown.length - 1)), e.preventDefault())
           if (e.key === 'ArrowUp') ((idx = Math.max(idx - 1, 0)), e.preventDefault())
-          if (e.key === 'Enter' && shown[idx]) open(shown[idx])
+          if (e.key === 'Enter' && (e.metaKey || looksLikeQuestion || !shown.length)) (askIt(), e.preventDefault())
+          else if (e.key === 'Enter' && shown[idx]) open(shown[idx])
           if (e.key === 'Escape') onclose()
         }}
       />
     </label>
+    {#if q.trim()}
+      <button class="ask" onclick={askIt} disabled={asking}>
+        <Sparkles size={13} />
+        <span class="t">{asking ? 'Asking the workspace…' : `Ask: ${q.trim()}`}</span>
+        <kbd>{looksLikeQuestion || !shown.length ? '↵' : '⌘↵'}</kbd>
+      </button>
+    {/if}
+
+    {#if answer || askError}
+      <div class="answer">
+        {#if askError}
+          <p class="err">{askError}</p>
+        {:else if answer}
+          <p class="text">{answer.answer}</p>
+          {#if answer.citations.length}
+            <div class="cites">
+              {#each answer.citations as c (c.kind + c.itemId)}
+                {@const Icon = ICON[c.kind]}
+                <button class="cite" onclick={() => open({ kind: c.kind, id: c.itemId, title: c.title, sub: '' })}>
+                  <Icon size={12} /><span>{c.title}</span>
+                </button>
+              {/each}
+            </div>
+          {/if}
+          <span class="by">{answer.used} passages · {answer.model}</span>
+        {/if}
+      </div>
+    {/if}
+
     <div class="list">
       {#each shown as h, i (h.kind + h.id)}
         {@const Icon = ICON[h.kind]}
@@ -66,7 +123,7 @@
           <Icon size={14} /><span class="t">{h.title}</span><span class="s">{h.sub}</span>
         </button>
       {:else}
-        <p>{all.length ? 'Nothing matches.' : 'Loading…'}</p>
+        <p>{all.length ? (answer ? '' : 'Nothing matches by name. Press ↵ to ask instead.') : 'Loading…'}</p>
       {/each}
     </div>
   </div>
@@ -108,6 +165,90 @@
     color: var(--ink);
     font: inherit;
     font-size: 15px;
+  }
+  .ask {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    height: 40px;
+    padding: 0 16px;
+    border: 0;
+    border-bottom: 1px solid var(--line);
+    background: none;
+    color: var(--ink);
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+    text-align: left;
+  }
+  .ask:hover:not(:disabled) {
+    background: var(--accent-soft);
+  }
+  .ask .t {
+    flex: 1;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  kbd {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .answer {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 320px;
+    overflow: auto;
+  }
+  .text {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.55;
+    color: var(--ink);
+    white-space: pre-wrap;
+  }
+  .cites {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .cite {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 24px;
+    padding: 0 8px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: none;
+    color: var(--ink-2);
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+    max-width: 220px;
+  }
+  .cite:hover {
+    border-color: var(--line-strong);
+    color: var(--ink);
+  }
+  .cite span {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .by {
+    font-size: var(--fs-1);
+    color: var(--muted);
+  }
+  .err {
+    margin: 0;
+    font-size: 12px;
+    color: var(--danger);
   }
   .list {
     padding: 6px;

@@ -46,3 +46,15 @@ CREATE TABLE IF NOT EXISTS ws_project_items (
   PRIMARY KEY (kind, item_id)
 );
 CREATE INDEX IF NOT EXISTS ws_project_items_project ON ws_project_items(project_id);
+
+-- What the workspace knows, in a form a question can reach: one row per chunk
+-- of a doc, board or card, with the vector stored as bytes. D1 has no vector
+-- type, so the Worker scores them; a few thousand chunks is nothing to a
+-- dot product, and the search never leaves the workspace.
+CREATE TABLE IF NOT EXISTS ws_chunks (
+  kind TEXT NOT NULL, item_id TEXT NOT NULL, ord INTEGER NOT NULL,
+  title TEXT NOT NULL DEFAULT '', heading TEXT NOT NULL DEFAULT '',
+  text TEXT NOT NULL, embedding BLOB, updated_at TEXT NOT NULL,
+  PRIMARY KEY (kind, item_id, ord)
+);
+CREATE INDEX IF NOT EXISTS ws_chunks_item ON ws_chunks(kind, item_id);

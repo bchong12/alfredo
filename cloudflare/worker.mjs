@@ -161,6 +161,20 @@ async function api(req, env) {
   const where = await itemProjects(env)
   if (project && !mine.has(project)) fail('You do not have access to that project.', 403)
 
+  // Where a piece of work belongs, and whether this caller may see or change
+  // it. Every section below asks these, so they live above all of them.
+  const place = async (kind, id) => {
+    if (!project) return
+    await env.DB.prepare('INSERT INTO ws_project_items(kind,item_id,project_id) VALUES(?,?,?) ON CONFLICT(kind,item_id) DO UPDATE SET project_id = excluded.project_id')
+      .bind(kind, id, project)
+      .run()
+  }
+  const visible = (kind, id) => {
+    const p = where.get(`${kind}:${id}`)
+    return project ? p === project : mayRead(mine, p)
+  }
+  const writable = (kind, id) => mayWrite(mine, where.get(`${kind}:${id}`))
+
   // --- people and invitations
   if (path === '/members' && method === 'GET') {
     const people = await rows(env.DB.prepare('SELECT id, email, name, role FROM ws_users ORDER BY name'))
@@ -257,18 +271,67 @@ async function api(req, env) {
     return json({ ok: true })
   }
 
+  // --- what the workspace knows
+  //
+  // The Mac does the embedding and sends the vectors; the Worker keeps them
+  // beside the writing and scores them, so a question only ever sees the
+  // projects this caller is in.
+  if (path === '/chunks' && method === 'PUT') {
+    const b = await body(req)
+    const kind = text(b.kind, 20), itemId = text(b.itemId, 80)
+    if (!kind || !itemId) fail('Say which item these belong to.')
+    if (!writable(kind, itemId)) fail('You have read-only access to this project.', 403)
+    await env.DB.prepare('DELETE FROM ws_chunks WHERE kind = ? AND item_id = ?').bind(kind, itemId).run()
+    for (const c of b.chunks ?? []) {
+      const bytes = new Float32Array(c.embedding ?? []).buffer
+      await env.DB.prepare('INSERT INTO ws_chunks(kind,item_id,ord,title,heading,text,embedding,updated_at) VALUES(?,?,?,?,?,?,?,?)')
+        .bind(kind, itemId, c.ord ?? 0, text(c.title, 300), text(c.heading, 300), String(c.text ?? '').slice(0, 8000), bytes, now())
+        .run()
+    }
+    return json({ ok: true, chunks: (b.chunks ?? []).length })
+  }
+  if (path === '/chunks' && method === 'DELETE') {
+    const b = await body(req)
+    await env.DB.prepare('DELETE FROM ws_chunks WHERE kind = ? AND item_id = ?').bind(text(b.kind, 20), text(b.itemId, 80)).run()
+    return json({ ok: true })
+  }
+  if (path === '/chunks/count' && method === 'GET') {
+    const r = await env.DB.prepare('SELECT count(*) AS n FROM ws_chunks').first()
+    return json({ count: r?.n ?? 0 })
+  }
+  if (path === '/chunks/search' && method === 'POST') {
+    const b = await body(req)
+    const want = new Float32Array(b.vector ?? [])
+    const words = String(b.text ?? '').toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 2)
+    const limit = Math.min(Math.max(Number(b.limit) || 12, 1), 50)
+    const all = await rows(env.DB.prepare('SELECT kind, item_id, ord, title, heading, text, embedding FROM ws_chunks'))
+    const dense = [], lexical = []
+    for (const r of all) {
+      if (!visible(r.kind, r.item_id)) continue
+      let dot = 0
+      if (r.embedding && want.length) {
+        const v = new Float32Array(r.embedding)
+        const n = Math.min(v.length, want.length)
+        for (let i = 0; i < n; i++) dot += v[i] * want[i]
+      }
+      // The word half: how much of the question this chunk actually says.
+      const hay = `${r.title} ${r.heading} ${r.text}`.toLowerCase()
+      const hits = words.filter((w) => hay.includes(w)).length
+      dense.push({ r, dot })
+      if (hits) lexical.push({ r, hits })
+    }
+    dense.sort((a, b2) => b2.dot - a.dot)
+    lexical.sort((a, b2) => b2.hits - a.hits)
+    // Reciprocal rank fusion, the same as the Postgres side.
+    const key = (r) => `${r.kind}:${r.item_id}:${r.ord}`
+    const score = new Map()
+    dense.slice(0, limit * 4).forEach(({ r }, i) => score.set(key(r), { r, s: (score.get(key(r))?.s ?? 0) + 1 / (60 + i + 1) }))
+    lexical.slice(0, limit * 4).forEach(({ r }, i) => score.set(key(r), { r, s: (score.get(key(r))?.s ?? 0) + 1 / (60 + i + 1) }))
+    const best = [...score.values()].sort((a, b2) => b2.s - a.s).slice(0, limit)
+    return json(best.map(({ r, s }) => ({ kind: r.kind, itemId: r.item_id, ord: r.ord, title: r.title, heading: r.heading, text: r.text, score: s })))
+  }
+
   // --- documents, boards and meetings
-  const place = async (kind, id) => {
-    if (!project) return
-    await env.DB.prepare('INSERT INTO ws_project_items(kind,item_id,project_id) VALUES(?,?,?) ON CONFLICT(kind,item_id) DO UPDATE SET project_id = excluded.project_id')
-      .bind(kind, id, project)
-      .run()
-  }
-  const visible = (kind, id) => {
-    const p = where.get(`${kind}:${id}`)
-    return project ? p === project : mayRead(mine, p)
-  }
-  const writable = (kind, id) => mayWrite(mine, where.get(`${kind}:${id}`))
 
   async function findItem(id) {
     const row = await env.DB.prepare('SELECT * FROM ws_items WHERE id=? AND archived=0').bind(id).first()

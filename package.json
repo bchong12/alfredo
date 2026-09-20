@@ -13,18 +13,22 @@
     "devices": "tsx -e \"import('./server/audio.ts').then(async m=>console.log(await m.listDevices()))\"",
     "postinstall": "node scripts/fix-pty.mjs",
     "desktop": "electron .",
-    "build:server": "esbuild server/index.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist-server/index.mjs --external:node-pty --external:@electric-sql/pglite --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\"",
+    "build:server": "esbuild server/index.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist-server/index.mjs --external:node-pty --external:@electric-sql/pglite --external:@huggingface/transformers --external:@electric-sql/pglite-pgvector --external:onnxruntime-node --external:sharp --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\"",
     "desktop:build": "npm run build:desktop-ui && npm run build:server && electron-builder --mac --dir",
     "desktop:install": "npm run desktop:build && (osascript -e 'quit app \"Alfredo\"' >/dev/null 2>&1; sleep 2; rm -rf /Applications/Alfredo.app && cp -R dist-app/mac-arm64/Alfredo.app /Applications/ && open -a /Applications/Alfredo.app && echo installed)",
     "build:desktop-ui": "vite build --mode desktop"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.8",
+    "@electric-sql/pglite-pgvector": "^0.0.9",
+    "@huggingface/transformers": "^4.3.0",
+    "@xterm/headless": "^6.0.0",
     "node-pty": "^1.1.0"
   },
   "devDependencies": {
     "@fontsource-variable/geist": "^5.3.0",
     "@fontsource-variable/geist-mono": "^5.3.0",
+    "@fontsource-variable/inter": "^5.3.0",
     "@hono/mcp": "^0.2.3",
     "@hono/node-server": "^1.19.9",
     "@lucide/svelte": "^1.37.0",
@@ -34,6 +38,10 @@
     "@sveltejs/vite-plugin-svelte": "^5.0.0",
     "@types/node": "^24.0.0",
     "@types/pg": "^8.23.1",
+    "@types/ws": "^8.18.1",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-web-links": "^0.12.0",
+    "@xterm/xterm": "^6.0.0",
     "@xyflow/svelte": "^1.6.6",
     "concurrently": "^9.1.0",
     "electron": "^38.8.6",
@@ -48,6 +56,7 @@
     "tsx": "^4.19.0",
     "typescript": "^5.8.0",
     "vite": "^6.1.0",
+    "ws": "^8.21.3",
     "zod": "^4.3.6"
   },
   "main": "desktop/main.cjs",
@@ -67,7 +76,14 @@
       "scripts/build-parakeet.sh",
       "package.json",
       "!desktop/icon/alfredo.iconset",
-      "!desktop/icon/icon.png"
+      "!desktop/icon/icon.png",
+      "!node_modules/onnxruntime-node/bin/napi-v6/win32",
+      "!node_modules/onnxruntime-node/bin/napi-v6/linux",
+      "!node_modules/onnxruntime-node/bin/napi-v6/darwin/x64",
+      "!node_modules/onnxruntime-web",
+      "!node_modules/@img/sharp-libvips*",
+      "!node_modules/@img/sharp-win32*",
+      "!node_modules/@img/sharp-linux*"
     ],
     "mac": {
       "category": "public.app-category.developer-tools",

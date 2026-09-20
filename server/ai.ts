@@ -18,7 +18,7 @@ export const TRANSCRIBE_MODEL = env('CRM_TRANSCRIBE_MODEL') ?? 'google/gemini-2.
  * price of nothing is still nothing (about $0.007 a meeting), and 43s is
  * uncomfortably close to the 150s an Edge Function is allowed to run.
  */
-const EXTRACT_MODEL = env('CRM_EXTRACT_MODEL') ?? 'google/gemini-2.5-flash'
+export const EXTRACT_MODEL = env('CRM_EXTRACT_MODEL') ?? 'google/gemini-2.5-flash'
 
 export const BITRATE_KBPS = 32
 

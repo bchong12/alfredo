@@ -414,6 +414,95 @@ create index if not exists invites_email on invites (lower(email));
 alter table people add column if not exists user_id uuid;
 create index if not exists people_user on people (user_id);
 
+-- ---------------------------------------------------------------------------
+-- What the workspace knows, in a form a question can reach.
+--
+-- One row per chunk of a doc, meeting, card or canvas: the words, who they
+-- belong to, and a vector of them. Asking a question is a vector search and a
+-- word search over this table, fused. It is a copy of the writing, so it can
+-- be thrown away and rebuilt at any time, and it follows the same access
+-- rules as the work it came from (see db/policies.sql).
+-- ---------------------------------------------------------------------------
+create extension if not exists vector;
+
+create table if not exists chunks (
+  id         uuid primary key default gen_random_uuid(),
+  kind       text not null check (kind in ('card','doc','canvas','meeting')),
+  item_id    text not null,
+  ord        integer not null default 0,
+  title      text not null default '',
+  heading    text not null default '',
+  text       text not null,
+  embedding  vector(384),
+  updated_at timestamptz not null default now(),
+  unique (kind, item_id, ord)
+);
+create index if not exists chunks_item on chunks (kind, item_id);
+
+-- The word half of the search, so an exact term still lands.
+alter table chunks add column if not exists fts tsvector
+  generated always as (to_tsvector('english', coalesce(title,'') || ' ' || coalesce(heading,'') || ' ' || text)) stored;
+create index if not exists chunks_fts on chunks using gin (fts);
+
+-- The meaning half. Cosine, because the vectors come out normalised.
+do $$
+begin
+  if not exists (select 1 from pg_class where relname = 'chunks_embedding_idx') then
+    begin
+      execute 'create index chunks_embedding_idx on chunks using hnsw (embedding vector_cosine_ops)';
+    exception when others then
+      -- Older pgvector has no HNSW; a list index is still far better than none.
+      begin
+        execute 'create index chunks_embedding_idx on chunks using ivfflat (embedding vector_cosine_ops) with (lists = 100)';
+      exception when others then
+        null;
+      end;
+    end;
+  end if;
+end $$;
+
+/*
+ * Asking the workspace something.
+ *
+ * Two searches and one list. The vector half finds what a question means;
+ * the word half finds the exact term the vectors shrug at (a name, "PUR-42",
+ * a price). Reciprocal rank fusion puts them together: each half votes with
+ * 1/(60 + its rank), which needs no tuning and no comparable scores.
+ *
+ * Runs as the caller, so the policies on chunks decide what can be found.
+ */
+create or replace function alfredo_search(q_embedding vector(384), q_text text default '', k integer default 12)
+returns table (kind text, item_id text, ord integer, title text, heading text, text text, score double precision)
+language sql stable as $$
+  with dense as (
+    select c.kind, c.item_id, c.ord, c.title, c.heading, c.text,
+           row_number() over (order by c.embedding <=> q_embedding) as rank
+    from chunks c
+    where q_embedding is not null and c.embedding is not null
+    order by c.embedding <=> q_embedding
+    limit greatest(k * 4, 40)
+  ),
+  words as (
+    select c.kind, c.item_id, c.ord, c.title, c.heading, c.text,
+           row_number() over (order by ts_rank(c.fts, websearch_to_tsquery('english', q_text)) desc) as rank
+    from chunks c
+    where coalesce(q_text, '') <> '' and c.fts @@ websearch_to_tsquery('english', q_text)
+    order by ts_rank(c.fts, websearch_to_tsquery('english', q_text)) desc
+    limit greatest(k * 4, 40)
+  )
+  select coalesce(d.kind, w.kind)         as kind,
+         coalesce(d.item_id, w.item_id)   as item_id,
+         coalesce(d.ord, w.ord)           as ord,
+         coalesce(d.title, w.title)       as title,
+         coalesce(d.heading, w.heading)   as heading,
+         coalesce(d.text, w.text)         as text,
+         coalesce(1.0 / (60 + d.rank), 0) + coalesce(1.0 / (60 + w.rank), 0) as score
+  from dense d
+  full outer join words w on w.kind = d.kind and w.item_id = d.item_id and w.ord = d.ord
+  order by score desc
+  limit k;
+$$;
+
 -- Row-level security on, no policies. Every server talks to the database with
 -- the service key (which bypasses RLS); the publishable key in the browser is
 -- only for signing in. With RLS off, that public key could read and write
@@ -422,7 +511,7 @@ do $$
 declare t text;
 begin
   foreach t in array array['meetings','transcripts','transcript_parts','summaries','folders','user_keys',
-    'people','weeks','columns','cards','docs','roadmap_items','roadmap_cards','canvases','workspace_settings','pack_data','projects','project_members','project_items','invites'] loop
+    'people','weeks','columns','cards','docs','roadmap_items','roadmap_cards','canvases','workspace_settings','pack_data','projects','project_members','project_items','invites','chunks'] loop
     execute format('alter table %I enable row level security', t);
   end loop;
 end $$;

@@ -15,6 +15,7 @@
 // returning something plausible.
 
 import { PGlite } from '@electric-sql/pglite'
+import { vector } from '@electric-sql/pglite-pgvector'
 import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 
@@ -344,7 +345,8 @@ export class LocalDb {
 
   static async open(dir: string, schemaSql: string) {
     mkdirSync(dir, { recursive: true })
-    const pg = new PGlite(join(dir, 'db'))
+    // pgvector, so a workspace on this Mac can be asked questions too.
+    const pg = new PGlite(join(dir, 'db'), { extensions: { vector } })
     await pg.waitReady
     // pgcrypto is not loadable here and is only in the schema for
     // gen_random_uuid(), which has been core Postgres since 13.
@@ -355,6 +357,21 @@ export class LocalDb {
   }
 
   from(table: string) { return new Query(this, table) }
+
+  /**
+   * A database function, called the way supabase-js calls one. Alfredo uses
+   * it for the search that asks the workspace something (alfredo_search).
+   */
+  async rpc<T = Row[]>(name: string, args: Record<string, unknown> = {}): Promise<Result<T>> {
+    const keys = Object.keys(args)
+    const call = keys.length ? keys.map((k, i) => `"${k}" => $${i + 1}`).join(', ') : ''
+    try {
+      const r = await this.pg.query<Row>(`SELECT * FROM "${name}"(${call})`, keys.map((k) => args[k] as never))
+      return { data: r.rows as T, error: null }
+    } catch (e) {
+      return { data: [] as unknown as T, error: { message: (e as Error).message } }
+    }
+  }
 
   /** Values that need help crossing into Postgres: JSON for jsonb columns. */
   encode(table: string, col: string, v: unknown) {

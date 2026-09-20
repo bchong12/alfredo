@@ -84,6 +84,14 @@ begin
   end loop;
 end $$;
 
+-- What the workspace knows follows the work it was taken from, so a question
+-- can never reach across into a project you are not in.
+drop policy if exists chunks_read on chunks;
+create policy chunks_read on chunks for select using (alfredo_visible(kind, item_id));
+drop policy if exists chunks_write on chunks;
+create policy chunks_write on chunks for all
+  using (alfredo_visible(kind, item_id, true)) with check (alfredo_visible(kind, item_id, true));
+
 -- A meeting's transcript and write-up follow the meeting itself.
 drop policy if exists transcripts_read on transcripts;
 create policy transcripts_read on transcripts for select using (alfredo_visible('meeting', meeting_id::text));
