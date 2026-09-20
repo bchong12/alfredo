@@ -6,12 +6,17 @@
 // only what to show until it arrives, and for the places a photo was never
 // uploaded. Nothing here is the truth, so losing it costs a redraw.
 
-import type { Person } from './api'
+import type { Person, Settings } from './api'
+import type { Project } from './project.svelte'
 
 type Brand = { name?: string; logo?: string | null }
 
+/** Enough of a workspace to draw it before its database has answered. */
+export type Shell = { settings: Settings; members: Person[]; projects: { enabled: boolean; list: Project[] } }
+
 const BRANDS = 'alfredo.brands'
 const FACES = 'alfredo.faces'
+const SHELLS = 'alfredo.shells'
 /** Enough for the people and workspaces anyone actually switches between. */
 const FACE_LIMIT = 40
 
@@ -66,6 +71,30 @@ export function rememberFaces(people: Person[]) {
   const keys = Object.keys(faces)
   for (const old of keys.slice(0, Math.max(0, keys.length - FACE_LIMIT))) delete faces[old]
   write(FACES, faces)
+}
+
+/**
+ * The shape of a workspace as it was last seen: its name, its tabs, who is in
+ * it, which projects it has. Switching to it draws all of that at once and the
+ * database's answer replaces it a moment later, so a switch never shows an
+ * empty page while two round trips finish.
+ */
+const shells = read<Record<string, Shell>>(SHELLS, {})
+
+export function rememberShell(id: string, s: Shell) {
+  if (!id) return
+  shells[id] = s
+  const keys = Object.keys(shells)
+  // Only the handful of workspaces anyone actually moves between.
+  for (const old of keys.slice(0, Math.max(0, keys.length - 8))) delete shells[old]
+  write(SHELLS, shells)
+}
+
+export const shellOf = (id: string): Shell | null => shells[id] ?? null
+
+export function forgetShell(id: string) {
+  delete shells[id]
+  write(SHELLS, shells)
 }
 
 /** Their photo here, else the one they have anywhere else, else nothing. */

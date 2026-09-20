@@ -2,6 +2,7 @@
 // whichever project is open (every call carries it; see project.svelte.ts).
 import { api, post } from '../lib/session.svelte'
 import { projectHeader, forgetProject } from './project.svelte'
+import { counted } from './net.svelte'
 
 export type Status = 'todo' | 'progress' | 'review' | 'done'
 export const STATUSES: { id: Status; label: string }[] = [
@@ -63,11 +64,11 @@ async function withProject<T>(run: () => Promise<T>): Promise<T> {
 }
 
 export const v2 = {
-  get: <T>(path: string) => withProject(() => api<T>(P + path, projectHeader())),
-  post: <T>(path: string, body: unknown = {}) => withProject(() => post<T>(P + path, body, 'POST', projectHeader())),
-  put: <T>(path: string, body: unknown) => withProject(() => post<T>(P + path, body, 'PUT', projectHeader())),
-  patch: <T>(path: string, body: unknown) => withProject(() => post<T>(P + path, body, 'PATCH', projectHeader())),
-  del: <T>(path: string) => withProject(() => post<T>(P + path, {}, 'DELETE', projectHeader())),
+  get: <T>(path: string) => counted(() => withProject(() => api<T>(P + path, projectHeader()))),
+  post: <T>(path: string, body: unknown = {}) => counted(() => withProject(() => post<T>(P + path, body, 'POST', projectHeader()))),
+  put: <T>(path: string, body: unknown) => counted(() => withProject(() => post<T>(P + path, body, 'PUT', projectHeader()))),
+  patch: <T>(path: string, body: unknown) => counted(() => withProject(() => post<T>(P + path, body, 'PATCH', projectHeader()))),
+  del: <T>(path: string) => counted(() => withProject(() => post<T>(P + path, {}, 'DELETE', projectHeader()))),
 }
 
 /** "4m ago", "Yesterday", "Sep 12". */

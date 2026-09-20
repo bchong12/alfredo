@@ -17,6 +17,7 @@
   import { activeWorkspace } from '../lib/workspace.svelte'
   import { scope } from './project.svelte'
   import { brandOf } from './remembered.svelte'
+  import { TAB_PATHS, prefetch } from './cache'
 
   let { onsearch }: { onsearch: () => void } = $props()
 
@@ -24,6 +25,8 @@
   let expanded = $state<Record<string, boolean>>({})
   const ICONS: Record<string, any> = { board: Columns3, docs: FileText, canvas: Shapes, meetings: Mic }
   const iconFor = (type: string) => ICONS[type] ?? PACK_TABS[type]?.icon ?? Package
+  /** Fetch what a tab shows while the pointer is still on its way to it. */
+  const warm = (type: string) => (TAB_PATHS[type] ?? []).forEach(prefetch)
 </script>
 
 <aside>
@@ -60,7 +63,7 @@
           {/each}
         {/if}
       {:else}
-        <button class="tab" class:on={ui.tab === t.id} onclick={() => go(t.id)}>
+        <button class="tab" class:on={ui.tab === t.id} onclick={() => go(t.id)} onmouseenter={() => warm(t.type)} onfocus={() => warm(t.type)}>
           <Icon size={14} />
           <span>{t.name}</span>
         </button>

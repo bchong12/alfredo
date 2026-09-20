@@ -2,7 +2,7 @@
   // Board: one cycle at a time (a week, unless the workspace says otherwise).
   // Everything is instant: cycles draw from cache and the neighbours are
   // prefetched; edits show before the server answers and undo if it refuses.
-  import { canEditHere } from './project.svelte'
+  import { canEditHere, scope } from './project.svelte'
   import ProjectChip from './ProjectChip.svelte'
   import { dndzone, type DndEvent } from 'svelte-dnd-action'
   import { fly } from 'svelte/transition'
@@ -11,6 +11,7 @@
   import ChevronLeft from '@lucide/svelte/icons/chevron-left'
   import ChevronRight from '@lucide/svelte/icons/chevron-right'
   import ChevronDown from '@lucide/svelte/icons/chevron-down'
+  import ArrowRight from '@lucide/svelte/icons/arrow-right'
   import Inbox from '@lucide/svelte/icons/inbox'
   import Settings2 from '@lucide/svelte/icons/settings-2'
   import CircleCheck from '@lucide/svelte/icons/circle-check'
@@ -192,16 +193,20 @@
     if (Object.keys(result.patch).length) patch(result.card.id, result.patch, result.card)
   }
 
-  async function complete(to: 'next' | 'backlog') {
+  let carrying = $state(false)
+
+  async function complete(to: 'next' | 'current' | 'backlog') {
     const before = cards ?? []
     set(before.filter((c) => c.status === 'done'))
     completing = false
+    carrying = false
     menu = false
     try {
       const r = await v2.post<{ moved: number }>('/weeks/complete', { start: week, to })
       drop('/cards')
       put(cardsPath(week), cards ?? [])
-      ui.error = r.moved ? `${r.moved} unfinished card${r.moved === 1 ? '' : 's'} moved to ${to === 'next' ? cycleName(shift(week, 1)) : 'the backlog'}` : ''
+      const where = to === 'backlog' ? 'the backlog' : to === 'current' ? cycleName(view?.current ?? week) : cycleName(shift(week, 1))
+      ui.error = r.moved ? `${r.moved} unfinished card${r.moved === 1 ? '' : 's'} moved to ${where}` : ''
       refreshView()
     } catch (e) {
       set(before)
@@ -225,7 +230,7 @@
   })
 </script>
 
-<svelte:window onkeydown={(e) => e.key === 'Escape' && menu && ((menu = false), (completing = false))} />
+<svelte:window onkeydown={(e) => e.key === 'Escape' && ((menu = false), (completing = false), (carrying = false))} />
 
 <div class="page">
   <Header crumbs={[tabName]}>
@@ -293,11 +298,58 @@
         </div>
       {/if}
     </div>
+    {#if canEditHere() && week !== 'backlog' && openHere && cycle && !(!cycle.current && !cycle.past)}
+      <div class="carry">
+        <button class="btn" class:open={carrying} title="Move what is not finished out of this cycle" onclick={() => ((carrying = !carrying), (menu = false))}>
+          <ArrowRight size={12} /><span>Carry over</span><b>{openHere}</b>
+        </button>
+        {#if carrying}
+          <!-- svelte-ignore a11y_click_events_have_key_events -->
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div class="catch" onclick={() => (carrying = false)}></div>
+          <div class="pop">
+            <b>Carry over {openHere} unfinished card{openHere === 1 ? '' : 's'}</b>
+            <span>Done cards stay in {cycleName(week)} as history.</span>
+            {#if !cycle.current}
+              <button class="opt" onclick={() => complete('current')}>Move to {cycleName(view?.current ?? week)} <i>the one running now</i></button>
+            {/if}
+            {#if cycle.current || shift(week, 1) !== view?.current}
+              <button class="opt" onclick={() => complete('next')}>Move to {cycleName(shift(week, 1))}{#if !cycle.current}<i>the one after</i>{/if}</button>
+            {/if}
+            <button class="opt" onclick={() => complete('backlog')}>Send to the backlog</button>
+            <button
+              class="link"
+              onclick={() => {
+                carrying = false
+                openSettings('cycles')
+              }}>Do this on its own, every cycle…</button
+            >
+          </div>
+        {/if}
+      </div>
+    {/if}
     {#if canEditHere()}<button class="btn" onclick={() => ((adding = 'todo'), (draft = ''))}><Plus size={12} /><span>New card</span></button>{/if}
   </Header>
 
+  {#if cards && !cards.length}
+    <!-- An empty cycle should say what to do with it, not show four empty columns. -->
+    <div class="nothing">
+      <b>{week === 'backlog' ? 'The backlog is empty.' : `Nothing in ${cycleName(week)} yet.`}</b>
+      {#if canEditHere()}
+        <span>
+          {#if week === 'backlog'}Cards sent back from a cycle wait here.
+          {:else if scope.enabled && scope.id}New cards land in this project.
+          {:else}Start one, or carry unfinished work over from another cycle.{/if}
+        </span>
+        <div class="acts">
+          <button class="btn" onclick={() => ((adding = 'todo'), (draft = ''))}><Plus size={12} /><span>New card</span></button>
+          {#if week !== 'backlog'}<button class="btn" onclick={() => ((menu = true), (completing = false))}>Another cycle…</button>{/if}
+        </div>
+      {/if}
+    </div>
+  {/if}
   {#key week}
-    <div class="cols" in:fly={{ x: dir * 18, duration: dir ? 180 : 0 }}>
+    <div class="cols" class:quiet={cards && !cards.length} in:fly={{ x: dir * 18, duration: dir ? 180 : 0 }}>
       {#each STATUSES as st, i (st.id)}
         <section class="col">
           <header>
@@ -369,6 +421,7 @@
     display: flex;
     flex-direction: column;
     min-width: 0;
+    position: relative;
   }
   .cols {
     flex: 1;
@@ -714,5 +767,87 @@
     font-size: 12px;
     cursor: pointer;
     padding: 4px;
+  }
+  /* Carrying work forward is the most common thing anyone does at the end of a
+     week, so it is a button on the bar rather than an item in a menu. */
+  .carry {
+    position: relative;
+  }
+  .nothing {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 190px;
+    z-index: 2;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    pointer-events: none;
+    color: var(--muted);
+  }
+  .nothing b {
+    font-size: 15px;
+    color: var(--ink-2);
+    font-weight: 600;
+  }
+  .nothing span {
+    font-size: 13px;
+  }
+  .nothing .acts {
+    display: flex;
+    gap: 8px;
+    margin-top: 6px;
+    pointer-events: all;
+  }
+  /* The columns stay, so the shape of the board is still there to drop into. */
+  .cols.quiet {
+    opacity: 0.5;
+  }
+  .carry .btn b {
+    font-family: var(--mono);
+    font-weight: 400;
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .carry .btn.open {
+    border-color: var(--muted);
+  }
+  .pop {
+    position: absolute;
+    right: 0;
+    top: 34px;
+    width: 268px;
+    z-index: 30;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 12px;
+    border-radius: 10px;
+    background: var(--raised);
+    border: 1px solid var(--line-strong);
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+  }
+  .pop b {
+    font-size: 13px;
+  }
+  .pop span {
+    font-size: 12px;
+    color: var(--muted);
+    line-height: 1.5;
+    margin-bottom: 4px;
+  }
+  .pop .opt {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 0 10px;
+    text-align: left;
+  }
+  .pop .opt i {
+    font-style: normal;
+    font-size: 11px;
+    color: var(--muted);
   }
 </style>

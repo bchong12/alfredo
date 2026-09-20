@@ -15,15 +15,29 @@
   import { PACK_TABS } from './packs'
   import SignIn from './SignIn.svelte'
   import Welcome from './Welcome.svelte'
+  import PageSkeleton from './PageSkeleton.svelte'
+  import ShellSkeleton from './ShellSkeleton.svelte'
   import X from '@lucide/svelte/icons/x'
   import { untrack } from 'svelte'
   import { scope } from './project.svelte'
   import { ui, visibleTabs, loadWorkspaceState, openSettings, packView } from './state.svelte'
   import { workspace, activeWorkspace, loadWorkspaces } from '../lib/workspace.svelte'
   import { auth, boot } from '../lib/session.svelte'
+  import { net } from './net.svelte'
 
   let searching = $state(false)
   let adding = $state(false)
+
+  // Anything in flight for longer than a blink. Below that nobody needs telling.
+  let slow = $state(false)
+  $effect(() => {
+    if (!net.busy) {
+      slow = false
+      return
+    }
+    const t = setTimeout(() => (slow = true), 280)
+    return () => clearTimeout(t)
+  })
 
   loadWorkspaces().then(() => boot())
 
@@ -62,6 +76,31 @@
 
   const tab = $derived(visibleTabs().find((t) => t.id === ui.tab) ?? visibleTabs()[0])
 
+  // The shape of the page that is coming, so the wait looks like the thing
+  // being waited for. Remembered, because the first frame happens before any
+  // workspace has said which tabs it has.
+  const KIND: Record<string, 'list' | 'board' | 'grid'> = { board: 'board', docs: 'list', meetings: 'list', canvas: 'grid' }
+  let lastKind = $state<'list' | 'board' | 'grid'>(
+    (() => {
+      try {
+        return (localStorage.getItem('alfredo.v2.kind') as 'list' | 'board' | 'grid' | null) ?? 'board'
+      } catch {
+        return 'board' as const
+      }
+    })(),
+  )
+  $effect(() => {
+    const type = tab?.type
+    if (!type) return
+    const k = KIND[type] ?? 'list'
+    untrack(() => {
+      lastKind = k
+      try {
+        localStorage.setItem('alfredo.v2.kind', k)
+      } catch {}
+    })
+  })
+
   function onkey(e: KeyboardEvent) {
     const mod = e.metaKey || e.ctrlKey
     if (mod && e.key === 'k') {
@@ -79,17 +118,18 @@
 <svelte:window onkeydown={onkey} />
 
 {#if !ready && !(workspace.ready && !workspace.list.length)}
-  <div class="boot"></div>
+  <ShellSkeleton />
 {:else if !workspace.list.length && !workspace.hosted}
   <Welcome />
 {:else}
   <div class="shell">
     <Sidebar onsearch={() => (searching = true)} />
     <main>
+      {#if slow}<div class="loading" aria-hidden="true"></div>{/if}
       {#if needsLogin}
         <SignIn />
       {:else if !ui.settings}
-        <div class="boot">{ui.error ? '' : ''}</div>
+        <PageSkeleton kind={lastKind} />
       {:else if tab}
         {#key `${workspace.activeId}:${tab.id}:${scope.enabled ? (scope.id ?? 'all') : ''}`}
           {#if tab.type === 'board'}
@@ -155,6 +195,37 @@
     flex: 1;
     min-width: 0;
     height: 100%;
+    position: relative;
+  }
+  /* One line, at the top of whatever is on screen. It appears only when a call
+     is taking long enough to notice, so it never flickers on a fast answer. */
+  .loading {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    z-index: 30;
+    background: linear-gradient(90deg, transparent, var(--ink-2, #9a9a9a), transparent);
+    background-size: 42% 100%;
+    background-repeat: no-repeat;
+    animation: sweep 1.1s ease-in-out infinite;
+    opacity: 0.5;
+    pointer-events: none;
+  }
+  @keyframes sweep {
+    0% {
+      background-position: -45% 0;
+    }
+    100% {
+      background-position: 130% 0;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .loading {
+      animation: none;
+      background: var(--line-strong);
+    }
   }
   .boot {
     height: 100vh;

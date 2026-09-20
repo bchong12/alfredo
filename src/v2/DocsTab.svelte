@@ -6,6 +6,8 @@
   import { scope } from './project.svelte'
   import Plus from '@lucide/svelte/icons/plus'
   import Search from '@lucide/svelte/icons/search'
+  import LayoutGrid from '@lucide/svelte/icons/layout-grid'
+  import List from '@lucide/svelte/icons/list'
   import FileText from '@lucide/svelte/icons/file-text'
   import Trash2 from '@lucide/svelte/icons/trash-2'
   import Header from './Header.svelte'
@@ -53,40 +55,34 @@
   })
 
   const shown = $derived(query.trim() ? docs.filter((d) => d.title.toLowerCase().includes(query.trim().toLowerCase())) : docs)
-  const recent = $derived(shown.slice(0, 3))
+  /**
+   * How the home page lists what is written: tiles, or a table. No page
+   * previews either way -- a wall of tiny grey lines is decoration, and the
+   * title is what anyone actually looks for.
+   */
+  let view = $state<'grid' | 'list'>(
+    (() => {
+      try {
+        return localStorage.getItem('alfredo.v2.docsview') === 'list' ? 'list' : 'grid'
+      } catch {
+        return 'grid' as const
+      }
+    })(),
+  )
+  const empty = $derived(
+    query.trim()
+      ? 'Nothing matches that search.'
+      : scope.enabled && scope.id
+        ? 'Nothing here yet. New docs land in this project; to move an existing one, switch to All projects and use its project chip.'
+        : 'No docs yet. Start one with New doc.',
+  )
 
-  /** The first lines of each recent doc, for a thumbnail of the page itself. */
-  let previews = $state<Record<string, { kind: 'h1' | 'h2' | 'li' | 'p'; text: string }[]>>({})
-  function lines(md: string) {
-    const out: { kind: 'h1' | 'h2' | 'li' | 'p'; text: string }[] = []
-    for (const raw of md.split('\n')) {
-      const l = raw.trim()
-      if (!l || /^(```|---|!\[)/.test(l)) continue
-      const clean = (t: string) => t.replace(/[*_`]|\[([^\]]*)\]\([^)]*\)/g, (m, g) => g ?? '')
-      if (l.startsWith('# ')) out.push({ kind: 'h1', text: clean(l.slice(2)) })
-      else if (/^#{2,6} /.test(l)) out.push({ kind: 'h2', text: clean(l.replace(/^#+ /, '')) })
-      else if (/^([-*]|\d+\.)( \[.\])? /.test(l)) out.push({ kind: 'li', text: clean(l.replace(/^([-*]|\d+\.)( \[.\])? /, '')) })
-      else out.push({ kind: 'p', text: clean(l) })
-      if (out.length >= 9) break
-    }
-    return out
+  function setView(v: 'grid' | 'list') {
+    view = v
+    try {
+      localStorage.setItem('alfredo.v2.docsview', v)
+    } catch {}
   }
-  // Only `recent` is read here; which docs were already asked for lives in a
-  // plain Set, so the effect never re-runs off its own writes.
-  const asked = new Set<string>()
-  $effect(() => {
-    for (const d of recent) {
-      // Keyed by the edit time, so a doc edited since it was last drawn is drawn again.
-      const key = `${d.id}@${d.updatedAt}`
-      if (asked.has(key)) continue
-      asked.add(key)
-      const have = peek<Doc>(`/docs/${d.id}`)
-      if (have && have.updatedAt === d.updatedAt) previews = { ...previews, [d.id]: lines(have.body) }
-      fetchCached<Doc>(`/docs/${d.id}`)
-        .then((full) => (previews = { ...previews, [d.id]: lines(full.body) }))
-        .catch(() => {})
-    }
-  })
 
   /**
    * A doc just made has a placeholder name and a blank page. Put the cursor
@@ -210,58 +206,56 @@
         <div class="top">
           <h1>{tabName}</h1>
           <label class="find"><Search size={13} /><input placeholder="Search docs" bind:value={query} /></label>
+          <div class="seg" role="group" aria-label="How docs are listed">
+            <button class:on={view === 'grid'} title="Grid" aria-label="Grid" onclick={() => setView('grid')}><LayoutGrid size={13} /></button>
+            <button class:on={view === 'list'} title="List" aria-label="List" onclick={() => setView('list')}><List size={13} /></button>
+          </div>
         </div>
 
-        {#if loading && !docs.length}
-          <div class="recent">
-            {#each [0, 1, 2] as _}<div class="dcard sk"><div class="thumb"></div><div class="info"><Skeleton w="70%" h={12} /><Skeleton w="40%" h={10} /></div></div>{/each}
-          </div>
-        {:else if recent.length}
-          <div class="recent">
-            {#each recent as d (d.id)}
-              <button class="dcard" onclick={() => go(tabId, d.id)} onmouseenter={() => prefetch(`/docs/${d.id}`)}>
-                <div class="thumb">
-                  <div class="paper">
-                    <span class="pt">{d.title}</span>
-                    {#each previews[d.id] ?? [] as l}
-                      <span class="pl {l.kind}">{l.kind === 'li' ? '• ' : ''}{l.text}</span>
-                    {/each}
-                  </div>
-                </div>
-                <div class="info">
-                  <span class="t">{d.title}</span>
-                  <span class="s">Edited {ago(d.updatedAt)}</span>
-                </div>
+        {#if view === 'grid'}
+          <div class="grid">
+            {#each shown as d (d.id)}
+              <button class="tile" onclick={() => go(tabId, d.id)} onmouseenter={() => prefetch(`/docs/${d.id}`)}>
+                <FileText size={15} />
+                <span class="t">{d.title}</span>
+                <span class="s">
+                  {#if scope.enabled}
+                    <ProjectChip kind="doc" id={d.id} project={d.project ?? null} onmoved={(p) => (docs = docs.map((x) => (x.id === d.id ? { ...x, project: p } : x)))} />
+                  {:else if d.folder}{d.folder} ·{/if}
+                  Edited {ago(d.updatedAt)}
+                </span>
               </button>
+            {:else}
+              {#if loading}
+                {#each [0, 1, 2, 3, 4, 5] as _}<div class="tile sk"><Skeleton w={15} h={15} r={4} /><Skeleton w="70%" h={12} /><Skeleton w="40%" h={10} /></div>{/each}
+              {:else}
+                <p class="empty">{empty}</p>
+              {/if}
+            {/each}
+          </div>
+        {:else}
+          <div class="list">
+            <div class="lh"><span class="grow">All docs</span><span class="w120">{scope.enabled && !scope.id ? 'Project' : 'Folder'}</span><span class="w110 r">Edited</span></div>
+            {#each shown as d (d.id)}
+              <button class="row" onclick={() => go(tabId, d.id)} onmouseenter={() => prefetch(`/docs/${d.id}`)}>
+                <FileText size={14} />
+                <span class="grow t">{d.title}</span>
+                <span class="w120 dim">
+                  {#if scope.enabled}
+                    <ProjectChip kind="doc" id={d.id} project={d.project ?? null} onmoved={(p) => (docs = docs.map((x) => (x.id === d.id ? { ...x, project: p } : x)))} />
+                  {:else}{d.folder ?? ''}{/if}
+                </span>
+                <span class="w110 r dim">{ago(d.updatedAt)}</span>
+              </button>
+            {:else}
+              {#if loading}
+                {#each [0, 1, 2, 3] as _}<div class="row sk"><Skeleton w={14} h={14} /><Skeleton w="45%" h={12} /></div>{/each}
+              {:else}
+                <p class="empty">{empty}</p>
+              {/if}
             {/each}
           </div>
         {/if}
-
-        <div class="list">
-          <div class="lh"><span class="grow">All docs</span><span class="w120">{scope.enabled && !scope.id ? 'Project' : 'Folder'}</span><span class="w110 r">Edited</span></div>
-          {#each shown as d (d.id)}
-            <button class="row" onclick={() => go(tabId, d.id)} onmouseenter={() => prefetch(`/docs/${d.id}`)}>
-              <FileText size={14} />
-              <span class="grow t">{d.title}</span>
-              <span class="w120 dim">
-                {#if scope.enabled}
-                  <ProjectChip kind="doc" id={d.id} project={d.project ?? null} onmoved={(p) => (docs = docs.map((x) => (x.id === d.id ? { ...x, project: p } : x)))} />
-                {:else}{d.folder ?? ''}{/if}
-              </span>
-              <span class="w110 r dim">{ago(d.updatedAt)}</span>
-            </button>
-          {:else}
-            {#if loading}
-              {#each [0, 1, 2, 3] as _}<div class="row sk"><Skeleton w={14} h={14} /><Skeleton w="45%" h={12} /></div>{/each}
-            {:else}
-              <p class="empty">
-              {#if query}Nothing matches that search.
-              {:else if scope.enabled && scope.id}Nothing here yet. New docs land in this project; to move an existing one, switch to All projects and use its project chip.
-              {:else}No docs yet. Start one with New doc.{/if}
-            </p>
-            {/if}
-          {/each}
-        </div>
       </div>
     </div>
   </div>
@@ -289,7 +283,10 @@
   .top {
     display: flex;
     align-items: flex-end;
-    justify-content: space-between;
+    gap: 12px;
+  }
+  .top .find {
+    margin-left: auto;
   }
   h1 {
     margin: 0;
@@ -318,81 +315,79 @@
     font: inherit;
     font-size: 13px;
   }
-  .recent {
+  .seg {
     display: flex;
-    gap: 16px;
+    gap: 2px;
+    padding: 2px;
+    border-radius: var(--r-md);
+    border: 1px solid var(--line-strong);
+    background: var(--panel);
+    height: 32px;
+    box-sizing: border-box;
   }
-  .dcard {
-    flex: 1;
-    max-width: 310px;
+  .seg button {
+    width: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 0;
+    border-radius: 5px;
+    background: none;
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .seg button:hover {
+    color: var(--ink-2);
+  }
+  .seg button.on {
+    background: var(--raised);
+    color: var(--ink);
+  }
+  .grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+  }
+  .tile {
+    width: 232px;
+    min-height: 104px;
     display: flex;
     flex-direction: column;
+    gap: 9px;
+    align-items: flex-start;
+    padding: 14px 15px;
     border-radius: 10px;
     border: 1px solid var(--line-strong);
-    overflow: hidden;
     background: none;
-    padding: 0;
-    color: inherit;
+    color: var(--muted);
     font: inherit;
-    cursor: pointer;
     text-align: left;
+    cursor: pointer;
+    box-sizing: border-box;
   }
-  .dcard:hover {
+  .tile:hover {
     border-color: #3a3a3a;
+    background: var(--panel);
   }
-  .thumb {
-    height: 150px;
-    background: var(--raised);
-    overflow: hidden;
-    position: relative;
+  .tile.sk {
+    cursor: default;
   }
-  /* The page itself, set at page size and shrunk: a literal thumbnail. */
-  .paper {
-    position: absolute;
-    left: 22px;
-    top: 18px;
-    width: 640px;
-    transform: scale(0.42);
-    transform-origin: top left;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    pointer-events: none;
-  }
-  .pt {
-    font-size: 36px;
-    font-weight: 600;
-    letter-spacing: -0.03em;
-    line-height: 1.15;
-    color: var(--ink);
-  }
-  .pl {
-    font-size: 15px;
-    line-height: 1.55;
-    color: var(--ink-2);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .pl.h1,
-  .pl.h2 {
-    font-size: 20px;
-    font-weight: 600;
-    color: var(--ink);
-    margin-top: 6px;
-  }
-  .info {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    padding: 12px 14px;
-    border-top: 1px solid var(--line);
-  }
-  .info .t {
+  .tile .t {
     font-size: 14px;
     font-weight: 600;
+    color: var(--ink);
+    line-height: 1.35;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
   }
-  .info .s {
+  .tile .s {
+    margin-top: auto;
+    display: flex;
+    align-items: center;
+    gap: 6px;
     font-size: 12px;
     color: var(--muted);
   }

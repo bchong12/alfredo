@@ -9,7 +9,8 @@
   import FolderTree from '@lucide/svelte/icons/folder-tree'
   import BrainIcon from '@lucide/svelte/icons/brain'
   import { scope, PROJECT_COLORS_LIST as PROJECT_COLORS, type Project, type ProjectRole } from './project.svelte'
-  import { rememberBrand, rememberFaces, forgetBrand } from './remembered.svelte'
+  import { rememberBrand, rememberFaces, forgetBrand, forgetShell } from './remembered.svelte'
+  import { takeFocus } from './focus'
   import { setProject } from './state.svelte'
   import ConnectDatabase from './ConnectDatabase.svelte'
   import { PACK_TABS } from './packs'
@@ -189,17 +190,29 @@
     if (!f) return
     await saveSettings({ logo: await imageDataUrl(f, 256) })
   }
+  /**
+   * Removing a local workspace deletes the folder it lives in, and nothing
+   * brings it back. Two clicks in a row is not enough of a fence for that --
+   * it sits under the pane everyone tabs through -- so the workspace has to be
+   * named before the button does anything.
+   */
+  let confirmRemove = $state(false)
+  let removeName = $state('')
+  const removeReady = $derived(!!ws && removeName.trim().toLowerCase() === (ui.settings?.name ?? ws.name).trim().toLowerCase())
+
   async function forget() {
     if (!ws || ws.kind === 'remote') return
     if (!confirmRemove) {
       confirmRemove = true
+      removeName = ''
       return
     }
+    if (!removeReady) return
     forgetBrand(ws.id)
+    forgetShell(ws.id)
     await removeWorkspace(ws.id).catch(fail)
     ui.overlay = null
   }
-  let confirmRemove = $state(false)
 
   // --- cycles ------------------------------------------------------------------------
   let cyc = $state({ length: ui.settings?.cycles?.length ?? 1, rollover: ui.settings?.cycles?.rollover ?? 'ask', upcoming: ui.settings?.cycles?.upcoming ?? 1 })
@@ -436,7 +449,18 @@
           <div class="grow"></div>
           <section class="danger">
             <div class="lab"><b>Remove workspace from this Mac</b><span>{ws.kind === 'cloudflare' ? 'The Cloudflare database is untouched. You can reconnect it later.' : 'This deletes the folder on this Mac.'}</span></div>
-            <button class="red" onclick={forget}>{confirmRemove ? 'Click again to remove' : 'Remove'}</button>
+            {#if confirmRemove}
+              <div class="sure">
+                <span>Type <b>{ui.settings?.name ?? ws.name}</b> to remove it.</span>
+                <div class="srow">
+                  <input bind:value={removeName} placeholder={ui.settings?.name ?? ws.name} use:takeFocus onkeydown={(e) => e.key === 'Enter' && removeReady && forget()} />
+                  <button class="red" disabled={!removeReady} onclick={forget}>Remove</button>
+                  <button class="ghost" onclick={() => ((confirmRemove = false), (removeName = ''))}>Cancel</button>
+                </div>
+              </div>
+            {:else}
+              <button class="red" onclick={forget}>Remove</button>
+            {/if}
           </section>
         {/if}
       {:else if ui.settingsPage === 'projects'}
@@ -1185,6 +1209,39 @@
     font: inherit;
     font-size: 12px;
     cursor: pointer;
+  }
+  .sure {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    align-items: flex-end;
+  }
+  .sure > span {
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .sure b {
+    color: var(--ink-2);
+    font-weight: 600;
+  }
+  .srow {
+    display: flex;
+    gap: 6px;
+  }
+  .srow input {
+    width: 190px;
+    height: 30px;
+    padding: 0 9px;
+    border-radius: var(--r-md);
+    border: 1px solid var(--line-strong);
+    background: var(--bg);
+    color: var(--ink);
+    font: inherit;
+    font-size: 13px;
+  }
+  .srow .red:disabled {
+    opacity: 0.45;
+    cursor: default;
   }
   .danger {
     flex-direction: row;

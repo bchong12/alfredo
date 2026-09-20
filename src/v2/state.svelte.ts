@@ -1,9 +1,10 @@
 // Where the v2 UI is: which tab, which item inside it, which overlay.
 import { v2, type Person, type Settings, type TabDef } from './api'
 import { scope, rememberProject, recallProject, type Project } from './project.svelte'
-import { rememberBrand, rememberFaces } from './remembered.svelte'
+import { rememberBrand, rememberFaces, rememberShell, shellOf } from './remembered.svelte'
 import { PACK_TABS } from './packs'
 import { workspace } from '../lib/workspace.svelte'
+import { warmTabs } from './cache'
 
 export type Overlay = null | 'workspaces' | 'account' | 'settings'
 export type SettingsPage = 'general' | 'projects' | 'cycles' | 'tabs' | 'members' | 'database' | 'connections' | 'models' | 'appearance'
@@ -91,33 +92,63 @@ export function openSettings(page: SettingsPage = 'general') {
   ui.overlay = 'settings'
 }
 
+const lastTab = () => {
+  try {
+    return localStorage.getItem('alfredo.v2.tab')
+  } catch {
+    return null
+  }
+}
+
+/** Open the tab that was last open, if this workspace still has it. */
+function pickTab() {
+  const want = lastTab()
+  const tabs = visibleTabs()
+  ui.tab = tabs.some((t) => t.id === want) ? want! : (tabs[0]?.id ?? 'board')
+}
+
 export async function loadWorkspaceState(meEmail: string | null) {
   ui.error = ''
-  ui.settings = null
-  ui.members = []
-  scope.enabled = false
-  scope.list = []
-  scope.id = null
+  const w = workspace.activeId
+  // Draw the workspace as it was last seen, at once. Everything below replaces
+  // it with what the database says, usually before anyone has read a word.
+  const seen = shellOf(w)
+  if (seen) {
+    ui.settings = seen.settings
+    ui.members = seen.members
+    scope.enabled = seen.projects.enabled
+    scope.list = seen.projects.list
+    recallProject(w)
+    pickTab()
+    ui.item = null
+    warmTabs(visibleTabs().map((t) => t.type))
+  } else {
+    ui.settings = null
+    ui.members = []
+    scope.enabled = false
+    scope.list = []
+    scope.id = null
+  }
   try {
     await loadProjects()
     const [s, m] = await Promise.all([v2.get<Settings>('/settings'), v2.get<Person[]>('/members')])
+    if (workspace.activeId !== w) return
     ui.settings = s
     ui.members = m
     // So the switcher and everyone's face draw at once next time.
-    rememberBrand(workspace.activeId, { name: s.name, logo: s.logo })
+    rememberBrand(w, { name: s.name, logo: s.logo })
     rememberFaces(m)
+    rememberShell(w, { settings: s, members: m, projects: { enabled: scope.enabled, list: scope.list } })
     ui.me = (meEmail && m.find((p) => p.email?.toLowerCase() === meEmail.toLowerCase())) || m[0] || null
-    const want = (() => {
-      try {
-        return localStorage.getItem('alfredo.v2.tab')
-      } catch {
-        return null
-      }
-    })()
-    const tabs = visibleTabs()
-    ui.tab = tabs.some((t) => t.id === want) ? want! : (tabs[0]?.id ?? 'board')
-    ui.item = null
+    if (!seen) {
+      pickTab()
+      ui.item = null
+    }
+    warmTabs(visibleTabs().map((t) => t.type))
   } catch (e) {
+    // What was remembered is better than an error page; say what went wrong and
+    // keep the workspace on screen.
+    if (!seen) ui.settings = null
     ui.error = (e as Error).message
   }
 }

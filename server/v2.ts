@@ -1617,9 +1617,13 @@ export function v2Routes(current: () => { workspace: Workspace; db: unknown } | 
   }
 
   app.get('/weeks', async (c) => (await guard(c)) ?? c.json(await cycles(projectOf(c))))
-  /** Finish a cycle: its unfinished cards go to the next cycle or the backlog. */
+  /**
+   * Finish a cycle: its unfinished cards go somewhere else. `next` is the
+   * cycle after it, `current` the one running now (what carrying over from a
+   * cycle that ended weeks ago is usually meant to do), `backlog` no cycle.
+   */
   app.post('/weeks/complete', async (c) => {
-    const b = await c.req.json<{ start: string; to: 'next' | 'backlog' }>()
+    const b = await c.req.json<{ start: string; to: 'next' | 'current' | 'backlog' }>()
     const start = weekParam(b.start)
     if (!start || start === 'backlog') return c.json({ error: 'Pick a cycle.' }, 400)
     const denied = await guardWrite(c, 'card')
@@ -1628,8 +1632,9 @@ export function v2Routes(current: () => { workspace: Workspace; db: unknown } | 
     const view = await cycles()
     const m = cycleMath((await st.tally()).anchor ?? start, view.settings.length)
     const open = (await scoped(c, 'card', await st.cardsIn(m.weeksOf(start)))).filter((x) => x.status !== 'done').map((x) => x.id)
-    await st.moveCards(open, b.to === 'backlog' ? null : m.next(start))
-    return c.json({ moved: open.length })
+    const to = b.to === 'backlog' ? null : b.to === 'current' && view.current !== start ? view.current : m.next(start)
+    await st.moveCards(open, to)
+    return c.json({ moved: open.length, to })
   })
   app.get('/cards', async (c) => {
     const denied = await guard(c)
