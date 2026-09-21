@@ -25,7 +25,7 @@
   let meetings = $state<MeetingSummary[]>(peek<MeetingSummary[]>('/meetings') ?? [])
   let loading = $state(!peek('/meetings'))
   type Install = { state: 'idle' | 'running' | 'done' | 'failed'; log: string }
-  let engine = $state<{ parakeet: boolean; recording: boolean; install: Install } | null>(null)
+  let engine = $state<{ parakeet: boolean; recording: boolean; install: Install; canRecord?: boolean } | null>(null)
   let upcoming = $state<{ connected: boolean; events: Event[] } | null>(null)
   let job = $state<Job | null>(null)
   let title = $state('')
@@ -46,7 +46,7 @@
   }
   load()
   async function checkEngine() {
-    engine = await v2.get<{ parakeet: boolean; recording: boolean; install: Install }>('/transcribe/engine').catch(() => engine)
+    engine = await v2.get<{ parakeet: boolean; recording: boolean; install: Install; canRecord?: boolean }>('/transcribe/engine').catch(() => engine)
     if (engine?.install.state === 'running') setTimeout(checkEngine, 3000)
   }
   checkEngine()
@@ -241,12 +241,24 @@
     <Header crumbs={[tabName]}>
       {#if canEditHere()}
         <button class="ghost" onclick={create}><Plus size={12} /><span>New meeting</span></button>
-        <button class="primary" disabled={engine?.parakeet === false} onclick={() => start()}><i class="dot"></i><span>Transcribe</span></button>
+        <button class="primary" disabled={engine?.parakeet === false || engine?.canRecord === false} title={engine?.canRecord === false ? 'Recording needs a Mac' : ''} onclick={() => start()}><i class="dot"></i><span>Transcribe</span></button>
       {/if}
     </Header>
     <div class="scroll">
       <div class="home">
-        {#if engine && !engine.parakeet}
+        {#if engine && engine.canRecord === false}
+          <div class="model">
+            <div class="mi"><Cpu size={17} /></div>
+            <div class="mt">
+              <span class="h">Recording needs a Mac</span>
+              <span class="s">
+                Alfredo records the room and the call through macOS, and transcribes with Parakeet on Apple silicon. Everything
+                else works here: make a meeting, write the notes, and they are searched with the rest of the workspace.
+              </span>
+            </div>
+            <button class="primary sm" onclick={create}>New meeting</button>
+          </div>
+        {:else if engine && !engine.parakeet}
           <div class="model">
             <div class="mi"><Cpu size={17} /></div>
             <div class="mt">
@@ -286,7 +298,7 @@
                 <span class="bar"></span>
                 <div class="et"><span class="h">{ev.title}</span><span class="s">{when(ev.start)}{ev.people ? ` · ${ev.people} people` : ''}</span></div>
                 <span class="soon">{until(ev.start)}</span>
-                <button class="primary sm" disabled={engine?.parakeet === false} onclick={() => start(ev.title)}><i class="dot"></i>Transcribe</button>
+                <button class="primary sm" disabled={engine?.parakeet === false || engine?.canRecord === false} onclick={() => start(ev.title)}><i class="dot"></i>Transcribe</button>
               </div>
             {/each}
           {/if}

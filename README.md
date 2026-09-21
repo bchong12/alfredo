@@ -9,7 +9,7 @@
 <p align="center">
   <a href="LICENSE"><img alt="MIT licensed" src="https://img.shields.io/badge/licence-MIT-ededed?style=flat-square&labelColor=0a0a0a"></a>
   <img alt="No subscription" src="https://img.shields.io/badge/price-%240%20forever-ededed?style=flat-square&labelColor=0a0a0a">
-  <img alt="Runs on macOS" src="https://img.shields.io/badge/macOS-Apple%20silicon-ededed?style=flat-square&labelColor=0a0a0a">
+  <img alt="Runs on macOS, Linux and Windows" src="https://img.shields.io/badge/runs-macOS%20%C2%B7%20Linux%20%C2%B7%20Windows-ededed?style=flat-square&labelColor=0a0a0a">
   <img alt="Works with any MCP client" src="https://img.shields.io/badge/MCP-any%20client-ededed?style=flat-square&labelColor=0a0a0a">
 </p>
 
@@ -50,14 +50,14 @@ It is one app, built for a team that would rather own the data and the bill.
 
 ## Run it
 
-Needs macOS and Node 22 or newer.
+Needs Node 22 or newer.
 
 ```sh
 npm install
 npm run dev              # http://localhost:5210
 ```
 
-Or build and install the Mac app:
+On a Mac, build and install the app itself:
 
 ```sh
 npm run desktop:install  # /Applications/Alfredo.app
@@ -65,6 +65,31 @@ npm run desktop:install  # /Applications/Alfredo.app
 
 The first screen asks where your first workspace should live. Nothing else is
 required to start.
+
+### Where it runs
+
+Most of Alfredo is Node, WebAssembly and a browser, so it runs wherever those
+do. Two things are genuinely Apple's, and the app says so rather than pretending:
+
+| | macOS (Apple silicon) | Linux and Windows |
+| --- | --- | --- |
+| Board, Docs, Canvas, projects, people | Yes | Yes |
+| Your database: this machine, Supabase, Cloudflare | Yes | Yes. The local one is PGlite, which is WebAssembly |
+| The brain: chunking, embeddings, hybrid search | Yes | Yes. The embedding model has Linux and Windows builds |
+| MCP server for your own AI | Yes | Yes |
+| Meetings you write yourself | Yes | Yes |
+| **Recording a meeting** | Yes, room and call together | No. System audio comes from ScreenCaptureKit |
+| **Transcribing it here** | Yes, Parakeet on Apple silicon | No. Set `OPENROUTER_API_KEY` to transcribe elsewhere instead |
+| **A packaged desktop app** | Yes | Not yet. Electron is cross-platform; only the build target is set up for macOS |
+
+Secrets live in the macOS keychain where there is one, and in a `0600` file
+beside the workspace registry where there is not.
+
+Checked by running the server with the platform reported as Linux: workspaces,
+docs, meetings, the local PGlite database and the MCP server all work, and
+Meetings says recording needs a Mac instead of offering a download that cannot
+run. Nobody has yet run it on real Linux or Windows hardware, so if you do, say
+how it went.
 
 ## Everything goes through the database
 
