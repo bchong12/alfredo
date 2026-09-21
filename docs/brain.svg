@@ -1,0 +1,105 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="560" viewBox="0 0 1280 560" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Helvetica, Arial, sans-serif">
+  <rect width="1280" height="560" rx="18" fill="#0a0a0a"/>
+  <defs>
+    <marker id="a" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+      <path d="M0 0 L9 4.5 L0 9 z" fill="#3a3a3a"/>
+    </marker>
+  </defs>
+
+  <text x="56" y="56" fill="#ededed" font-size="19" font-weight="600">Reading the workspace in</text>
+  <text x="56" y="79" fill="#6f6f6f" font-size="13.5">Runs when something is saved, and once over everything from before.</text>
+
+  <!-- indexing row -->
+  <g transform="translate(56 104)">
+    <g>
+      <rect width="250" height="108" rx="12" fill="#121212" stroke="#242424"/>
+      <text x="18" y="30" fill="#ededed" font-size="14.5" font-weight="600">What was written</text>
+      <text x="18" y="56" fill="#8a8a8a" font-size="12.5">a doc, a meeting's notes and</text>
+      <text x="18" y="74" fill="#8a8a8a" font-size="12.5">transcript, a card, the words</text>
+      <text x="18" y="92" fill="#8a8a8a" font-size="12.5">on a canvas</text>
+    </g>
+    <line x1="258" y1="54" x2="292" y2="54" stroke="#3a3a3a" stroke-width="1.5" marker-end="url(#a)"/>
+
+    <g transform="translate(300 0)">
+      <rect width="250" height="108" rx="12" fill="#121212" stroke="#242424"/>
+      <text x="18" y="30" fill="#ededed" font-size="14.5" font-weight="600">Cut on its own headings</text>
+      <text x="18" y="56" fill="#8a8a8a" font-size="12.5">~380 tokens, 60 of overlap,</text>
+      <text x="18" y="74" fill="#8a8a8a" font-size="12.5">each piece carrying its title</text>
+      <text x="18" y="92" fill="#8a8a8a" font-size="12.5">and heading path</text>
+    </g>
+    <line x1="558" y1="54" x2="592" y2="54" stroke="#3a3a3a" stroke-width="1.5" marker-end="url(#a)"/>
+
+    <g transform="translate(600 0)">
+      <rect width="250" height="108" rx="12" fill="#121212" stroke="#242424"/>
+      <text x="18" y="30" fill="#ededed" font-size="14.5" font-weight="600">Embedded here</text>
+      <text x="18" y="56" fill="#8a8a8a" font-size="12.5">bge-small-en-v1.5, int8,</text>
+      <text x="18" y="74" fill="#8a8a8a" font-size="12.5">384 numbers a piece, 34 MB,</text>
+      <text x="18" y="92" fill="#8a8a8a" font-size="12.5">downloaded once</text>
+    </g>
+    <line x1="858" y1="54" x2="892" y2="54" stroke="#3a3a3a" stroke-width="1.5" marker-end="url(#a)"/>
+
+    <g transform="translate(900 0)">
+      <rect width="268" height="108" rx="12" fill="#121212" stroke="#242424"/>
+      <text x="18" y="30" fill="#ededed" font-size="14.5" font-weight="600">Kept beside the work</text>
+      <text x="18" y="56" fill="#8a8a8a" font-size="12.5">a chunks table in the same</text>
+      <text x="18" y="74" fill="#8a8a8a" font-size="12.5">database, under the same</text>
+      <text x="18" y="92" fill="#8a8a8a" font-size="12.5">rules about who may read it</text>
+    </g>
+  </g>
+
+  <line x1="56" y1="248" x2="1224" y2="248" stroke="#1e1e1e"/>
+
+  <text x="56" y="286" fill="#ededed" font-size="19" font-weight="600">Asking it something</text>
+  <text x="56" y="309" fill="#6f6f6f" font-size="13.5">⌘K takes a question as well as a name.</text>
+
+  <!-- question row -->
+  <g transform="translate(56 334)">
+    <g>
+      <rect width="228" height="76" rx="12" fill="#151515" stroke="#2f2f2f"/>
+      <text x="18" y="30" fill="#ededed" font-size="14" font-weight="600">Your question</text>
+      <text x="18" y="54" fill="#8a8a8a" font-size="12.5">“what did we decide</text>
+      <text x="18" y="70" fill="#8a8a8a" font-size="12.5">about pricing?”</text>
+    </g>
+    <line x1="236" y1="38" x2="270" y2="38" stroke="#3a3a3a" stroke-width="1.5" marker-end="url(#a)"/>
+
+    <!-- two lanes -->
+    <g transform="translate(278 -18)">
+      <rect width="250" height="52" rx="10" fill="#121212" stroke="#242424"/>
+      <text x="16" y="23" fill="#ededed" font-size="13.5" font-weight="600">Vectors · what it means</text>
+      <text x="16" y="41" fill="#8a8a8a" font-size="12">finds it when the words differ</text>
+    </g>
+    <g transform="translate(278 44)">
+      <rect width="250" height="52" rx="10" fill="#121212" stroke="#242424"/>
+      <text x="16" y="23" fill="#ededed" font-size="13.5" font-weight="600">Full text · the exact words</text>
+      <text x="16" y="41" fill="#8a8a8a" font-size="12">finds the part number, the name</text>
+    </g>
+    <line x1="536" y1="38" x2="570" y2="38" stroke="#3a3a3a" stroke-width="1.5" marker-end="url(#a)"/>
+
+    <g transform="translate(578 0)">
+      <rect width="206" height="76" rx="12" fill="#121212" stroke="#242424"/>
+      <text x="16" y="30" fill="#ededed" font-size="14" font-weight="600">Fused by rank</text>
+      <text x="16" y="54" fill="#8a8a8a" font-size="12.5">both lists into one,</text>
+      <text x="16" y="70" fill="#8a8a8a" font-size="12.5">best of each on top</text>
+    </g>
+    <line x1="792" y1="38" x2="826" y2="38" stroke="#3a3a3a" stroke-width="1.5" marker-end="url(#a)"/>
+
+    <g transform="translate(834 0)">
+      <rect width="334" height="76" rx="12" fill="#151515" stroke="#2f2f2f"/>
+      <text x="18" y="30" fill="#ededed" font-size="14" font-weight="600">Claude Code, on this Mac</text>
+      <text x="18" y="54" fill="#8a8a8a" font-size="12.5">answers from those passages only, and</text>
+      <text x="18" y="70" fill="#8a8a8a" font-size="12.5">says which doc or meeting each line is from</text>
+    </g>
+  </g>
+
+  <!-- the two rules -->
+  <g transform="translate(56 448)">
+    <rect width="556" height="70" rx="12" fill="none" stroke="#242424" stroke-dasharray="5 5"/>
+    <text x="18" y="30" fill="#ededed" font-size="13.5" font-weight="600">Nothing leaves the machine</text>
+    <text x="18" y="52" fill="#8a8a8a" font-size="12.5">No Claude Code, no answer: there is no hosted model to fall back on.</text>
+  </g>
+  <g transform="translate(668 448)">
+    <rect width="556" height="70" rx="12" fill="none" stroke="#242424" stroke-dasharray="5 5"/>
+    <text x="18" y="30" fill="#ededed" font-size="13.5" font-weight="600">It can only find what you can open</text>
+    <text x="18" y="52" fill="#8a8a8a" font-size="12.5">The search runs as you, so a project you are not in cannot be quoted at you.</text>
+  </g>
+</svg>

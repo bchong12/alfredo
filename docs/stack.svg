@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="520" viewBox="0 0 1280 520" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Helvetica, Arial, sans-serif">
+  <rect width="1280" height="520" rx="18" fill="#0a0a0a"/>
+
+  <!-- left: what a team normally pays for -->
+  <text x="56" y="62" fill="#8a8a8a" font-size="13" letter-spacing="1.6">THE USUAL STACK, PER PERSON, PER MONTH</text>
+
+  <g transform="translate(56 88)">
+    <!-- board -->
+    <g>
+      <rect width="480" height="66" rx="12" fill="#121212" stroke="#242424"/>
+      <rect x="18" y="19" width="28" height="28" rx="8" fill="#5E6AD2"/>
+      <text x="27" y="39" fill="#ffffff" font-size="15" font-weight="700">L</text>
+      <text x="60" y="32" fill="#ededed" font-size="16" font-weight="600">Linear</text>
+      <text x="60" y="51" fill="#8a8a8a" font-size="12.5">Board, cycles, backlog</text>
+      <text x="458" y="42" fill="#ededed" font-size="19" font-weight="600" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">$16</text>
+    </g>
+    <!-- docs -->
+    <g transform="translate(0 80)">
+      <rect width="480" height="66" rx="12" fill="#121212" stroke="#242424"/>
+      <rect x="18" y="19" width="28" height="28" rx="8" fill="#ededed"/>
+      <text x="28" y="39" fill="#0a0a0a" font-size="15" font-weight="700">N</text>
+      <text x="60" y="32" fill="#ededed" font-size="16" font-weight="600">Notion <tspan fill="#6f6f6f" font-size="12.5" font-weight="400">Business</tspan></text>
+      <text x="60" y="51" fill="#8a8a8a" font-size="12.5">Docs, and the AI that reads them</text>
+      <text x="458" y="42" fill="#ededed" font-size="19" font-weight="600" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">$20</text>
+    </g>
+    <!-- canvas -->
+    <g transform="translate(0 160)">
+      <rect width="480" height="66" rx="12" fill="#121212" stroke="#242424"/>
+      <rect x="18" y="19" width="28" height="28" rx="8" fill="#FFD02F"/>
+      <text x="27" y="39" fill="#0a0a0a" font-size="15" font-weight="700">M</text>
+      <text x="60" y="32" fill="#ededed" font-size="16" font-weight="600">Miro <tspan fill="#6f6f6f" font-size="12.5" font-weight="400">Business</tspan></text>
+      <text x="60" y="51" fill="#8a8a8a" font-size="12.5">Whiteboards, frames, arrows</text>
+      <text x="458" y="42" fill="#ededed" font-size="19" font-weight="600" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">$20</text>
+    </g>
+    <!-- meetings -->
+    <g transform="translate(0 240)">
+      <rect width="480" height="66" rx="12" fill="#121212" stroke="#242424"/>
+      <rect x="18" y="19" width="28" height="28" rx="8" fill="#E0B27A"/>
+      <text x="27" y="39" fill="#0a0a0a" font-size="15" font-weight="700">G</text>
+      <text x="60" y="32" fill="#ededed" font-size="16" font-weight="600">Granola <tspan fill="#6f6f6f" font-size="12.5" font-weight="400">Business</tspan></text>
+      <text x="60" y="51" fill="#8a8a8a" font-size="12.5">Meeting notes, transcripts</text>
+      <text x="458" y="42" fill="#ededed" font-size="19" font-weight="600" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">$14</text>
+    </g>
+    <!-- the search layer nobody lists a price for -->
+    <g transform="translate(0 320)">
+      <rect width="480" height="44" rx="12" fill="none" stroke="#242424" stroke-dasharray="5 5"/>
+      <text x="18" y="28" fill="#6f6f6f" font-size="13">Glean-class search over all of it</text>
+      <text x="458" y="28" fill="#6f6f6f" font-size="13" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">$45–75, 100 seats min.</text>
+    </g>
+  </g>
+
+  <!-- the sum -->
+  <line x1="56" y1="470" x2="536" y2="470" stroke="#1e1e1e"/>
+  <text x="56" y="497" fill="#8a8a8a" font-size="13.5">Four tools, list price, billed annually</text>
+  <text x="536" y="497" fill="#ededed" font-size="15.5" font-weight="600" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">$70 / person / month</text>
+
+  <!-- divider -->
+  <line x1="616" y1="60" x2="616" y2="460" stroke="#1e1e1e"/>
+
+  <!-- right: alfredo -->
+  <g transform="translate(676 88)">
+    <rect width="548" height="288" rx="16" fill="#101010" stroke="#2a2a2a"/>
+
+    <g transform="translate(34 34) scale(0.16)" fill="#ededed">
+      <rect x="39.4" y="0.652" width="72.195" height="26.45" rx="6"/>
+      <rect x="2.787" y="37.251" width="35.598" height="26.45" rx="6"/>
+      <rect x="75.982" y="37.251" width="35.598" height="26.45" rx="6"/>
+      <rect x="2.787" y="73.849" width="108.793" height="26.45" rx="6"/>
+      <rect x="2.787" y="110.447" width="35.598" height="26.45" rx="6"/>
+      <rect x="75.982" y="110.447" width="35.598" height="26.45" rx="6"/>
+      <rect x="2.787" y="147.045" width="35.598" height="26.45" rx="6"/>
+      <rect x="75.982" y="147.045" width="35.598" height="26.45" rx="6"/>
+    </g>
+    <text x="66" y="58" fill="#ededed" font-size="27" font-weight="600" letter-spacing="-0.6">Alfredo</text>
+
+    <text x="34" y="104" fill="#8a8a8a" font-size="14.5">Board, Docs, Canvas and Meetings in one app,</text>
+    <text x="34" y="127" fill="#8a8a8a" font-size="14.5">that answers questions about all of it.</text>
+
+    <text x="34" y="196" fill="#ededed" font-size="66" font-weight="600" letter-spacing="-2" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">$0</text>
+    <text x="126" y="196" fill="#6f6f6f" font-size="15">/ person / month</text>
+    <text x="126" y="176" fill="#6f6f6f" font-size="15">forever</text>
+
+    <line x1="34" y1="222" x2="514" y2="222" stroke="#1e1e1e"/>
+    <text x="34" y="250" fill="#8a8a8a" font-size="13.5">Your own database · MIT licence · transcription and</text>
+    <text x="34" y="270" fill="#8a8a8a" font-size="13.5">answers on your Mac · no account, no server of ours</text>
+  </g>
+
+  <text x="676" y="420" fill="#6f6f6f" font-size="12.5">Prices as published in September 2026. The only bill is the</text>
+  <text x="676" y="440" fill="#6f6f6f" font-size="12.5">database you already pay for, or no bill at all.</text>
+</svg>

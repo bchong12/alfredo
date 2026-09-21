@@ -1,42 +1,36 @@
 # Alfredo
 
-Your company's brain, in a database you own. Alfredo is a Mac app with four
-tabs, **Board, Docs, Canvas and Meetings**, and an MCP server so Claude can
-read and write all of it.
+Your company's brain, in a database you own.
 
-Each workspace keeps its data in one database of your choice:
+Alfredo is a Mac app with four tabs, **Board, Docs, Canvas and Meetings**, that
+answers questions about everything written in them. It records and transcribes
+your meetings on your own machine, and it hands the whole workspace to Claude
+through an MCP server, so you can say "what did we decide about pricing" or
+"put last week's unfinished cards in this cycle" and mean it.
 
-| Where | Good for | Setup |
+There is no account, no server of ours, and no subscription. Each workspace
+lives in a database you choose: a folder on this Mac, your Supabase project, or
+your Cloudflare account.
+
+![What a team usually pays for this, next to Alfredo](docs/stack.svg)
+
+## What it replaces
+
+| Instead of | Alfredo's tab | Their list price, per person, per month |
 | --- | --- | --- |
-| This Mac | Personal, offline | None. A folder under `~/.alfredo/workspaces` |
-| Supabase | A team | Paste a personal access token; Alfredo creates the tables |
-| Cloudflare D1 | A team, on your own account | One click with your `wrangler` login |
+| [Linear](https://linear.app/pricing) Business | Board: cards, cycles, backlog | $16 |
+| [Notion](https://www.notion.com/pricing) Business | Docs, and the AI that reads them | $20 |
+| [Miro](https://miro.com/pricing/) Business | Canvas: frames, stickies, arrows | $20 |
+| [Granola](https://www.granola.ai/) Business | Meetings: transcripts and notes | $14 |
+| [Glean](https://www.glean.com/)-class search over all of it | Ask it anything, with citations | $45 to $75, with a seat minimum |
 
-Nothing is hosted by us. Keys and tokens live in the macOS keychain.
+Prices as published in September 2026. A team of ten pays about **$8,400 a
+year** for the first four. Alfredo is MIT licensed and costs nothing; the only
+bill is the database, which is free on this Mac, free on Supabase and Cloudflare
+at the sizes a workspace runs at, and yours either way.
 
-## What's in it
-
-- **Board**: kanban cards in cycles (1, 2 or 4 weeks, like sprints), a backlog,
-  and a choice of what happens to unfinished work when a cycle ends.
-- **Docs**: a writing home with real page thumbnails.
-- **Canvas**: a whiteboard with frames, stickies, shapes and arrows (Svelte
-  Flow, React Flow JSON compatible).
-- **Meetings**: record, transcribe on this Mac with Parakeet, and get notes
-  written by Claude Code. Only the transcript is kept; the audio is deleted.
-- **Ask it things**: ⌘K takes a question as well as a name. Everything written
-  down in the workspace is searched, and Claude Code answers from the passages
-  it found, saying which doc or meeting each claim came from. Nothing leaves
-  the Mac.
-- **Tabs you choose**: every workspace has a tabs JSON in its own database.
-  Rename, hide or add tabs; teams can add their own tab types as packs.
-- **Projects** (optional): split one workspace into separate boards, docs,
-  canvases and meetings, in the same database. You switch between the projects
-  you are in, under the workspace name.
-- **People**: whoever connects the database and makes the first account runs
-  the workspace. They invite the rest with a link, put each person in the
-  projects they need, and give each a role there: runs it, can edit, or read
-  only. Admin can be handed to someone else. All of it lives in the workspace's
-  database, so it travels with the workspace rather than with a Mac.
+That is not a claim that Alfredo is as good as any of them at their own game.
+It is one app, built for a team that would rather own the data and the bill.
 
 ## Run it
 
@@ -44,28 +38,103 @@ Needs macOS and Node 22 or newer.
 
 ```sh
 npm install
-npm run dev          # http://localhost:5210
+npm run dev              # http://localhost:5210
 ```
 
 Or build and install the Mac app:
 
 ```sh
-npm run desktop:install
+npm run desktop:install  # /Applications/Alfredo.app
 ```
 
-The first screen asks where your first workspace should live.
+The first screen asks where your first workspace should live. Nothing else is
+required to start.
 
-Optional extras:
+## Everything goes through the database
 
-- **Claude Code** (`claude` on your PATH) writes the meeting notes. Without it,
-  set `OPENROUTER_API_KEY` in `.env.local` (see `.env.local.example`).
-- **Parakeet** transcribes meetings on your Mac. Meetings offers to download it
-  the first time (needs Xcode command line tools; about 600 MB).
-- **Composio** (`composio login`) connects Gmail, Google Calendar and the rest
-  of Google Workspace in Settings, Connections.
-- **Wrangler** (`npx wrangler login`) lets Alfredo create Cloudflare workspaces.
+There is no Alfredo backend. The app talks to one database per workspace, and
+every last thing it knows lives in there: cards, docs, canvases, meetings,
+people, roles, invitations, which tabs the workspace has, and the passages the
+brain searches. Switching workspace switches database.
 
-## Connect Claude (MCP)
+| Where | Good for | Setup | Enforced by |
+| --- | --- | --- | --- |
+| **This Mac** | Yourself, offline | None. A folder under `~/.alfredo/workspaces` | Nothing to enforce: one person |
+| **Supabase** | A team | Paste a personal access token, Alfredo creates the tables | Postgres row-level security |
+| **Cloudflare D1** | A team, on your own account | One click with your `wrangler` login | A Worker that owns the only door to D1 |
+
+- Supabase: `db/schema.sql` and `db/policies.sql`, both safe to run again.
+- Cloudflare: `cloudflare/schema.sql` and `cloudflare/worker.mjs`.
+- This Mac: the same schema, in PGlite (Postgres compiled to WebAssembly).
+
+Because the rules live in the database, the app is not what stands between a
+teammate and a project they are not in. An invited teammate's copy of Alfredo
+holds no secret key at all: it connects with the publishable key and their own
+sign-in, and the list of projects they see is Postgres's answer, not the app's.
+
+Moving a workspace between databases is a matter of pointing Alfredo at the
+other one; nothing of yours is left behind on a machine of ours, because there
+isn't one.
+
+## The brain: asking your own writing
+
+![How the brain reads the workspace in and answers a question](docs/brain.svg)
+
+Everything written in a workspace is cut into passages, embedded, and kept in a
+`chunks` table beside the work itself. A question searches those passages two
+ways at once and hands the best of them to Claude Code, which answers from them
+and says where each claim came from.
+
+**Reading it in.** A doc, a meeting's notes and transcript, a card or the words
+on a canvas get cut on the writing's own headings, about 380 tokens a piece with
+60 tokens of overlap, and every piece carries its title and heading path in
+front of it, so a paragraph that says "we went with the second option" still
+knows what it is an option about. Retrieval lives or dies on that, far more than
+on the model. New work is read in as it is saved; everything from before is read
+in once, from Settings, Models (or `read_workspace_in` over MCP).
+
+**The model.** `bge-small-en-v1.5`, quantised to int8: 384 numbers a passage,
+about 34 MB, downloaded on first use and then never online again. It is small on
+purpose. What makes retrieval good is the chunking, a lexical pass beside the
+vectors, and fusing the two.
+
+**Searching.** Two lists, fused by reciprocal rank. The vectors find the
+passage that means what you asked even when it uses different words; full-text
+finds the exact part number, name or phrase that vectors always miss. Fusing
+them means neither has to be right on its own.
+
+**Answering.** Claude Code, on this Mac, from those passages only, with the
+bracketed number of each passage it used. When the workspace does not say, it
+says so rather than filling the gap. There is no hosted fallback: a company's
+own writing is the last thing to hand to a service nobody chose.
+
+**What it may find.** The search runs as whoever is asking, through the same
+row-level security as the work, so a project you are not in cannot be quoted at
+you. Ask inside a project and the answer stays inside it.
+
+⌘K takes a question as well as a name. The citations are chips: click one and
+the doc or meeting opens.
+
+## Meetings
+
+![Record, transcribe on this Mac, delete the audio, write it up, save it](docs/meeting.svg)
+
+Press **Transcribe**. Alfredo records the room and what the call is playing,
+turns it into text on this Mac with [Parakeet](https://github.com/FluidInference/FluidAudio),
+and deletes the audio the moment a transcript exists. Claude Code then writes
+the note: summary, decisions, open questions, and action items with owners and
+dates resolved (nobody lets the model do date arithmetic; it says "by Friday"
+and the code works out which Friday). The meeting is saved to your database and
+read into the brain, so the next question can quote it.
+
+Meetings offers to download Parakeet the first time, about 600 MB, needing
+Xcode's command line tools. No Parakeet and no Claude Code still leaves you a
+working tab: **New meeting** makes one you type the notes into yourself.
+
+Connect Google Calendar in Settings, Connections, and what is coming up appears
+above the list with a Transcribe button on each.
+
+## Claude, through MCP
 
 With Alfredo running:
 
@@ -73,88 +142,58 @@ With Alfredo running:
 claude mcp add --transport http alfredo http://127.0.0.1:29981/mcp
 ```
 
-Add `--header "x-workspace: <id>"` to pin a workspace; otherwise calls go to
-the active one. Tools:
+Add `--header "x-workspace: <id>"` to pin one workspace; otherwise calls go to
+the active one. Then talk to it:
+
+> "Connect my Supabase project Acme to a new workspace called Acme."
+> "What did we decide about the team plan price, and which meeting was it?"
+> "Make a project called Website, put Neil in it as an editor, and move the
+> three pricing docs into it."
+> "Read the whole workspace in, then tell me what is unfinished this cycle."
 
 | Tool | Does |
 | --- | --- |
 | `list_workspaces` | Every workspace and where it lives |
 | `ws_list`, `ws_read`, `ws_write` | Cards, docs, canvases, meetings, members |
-| `get_workspace`, `set_workspace_tabs` | The workspace's name and tabs JSON |
-| `list_pack_data`, `get_pack_data`, `set_pack_data` | Data for custom tab types |
+| `get_workspace`, `set_workspace_tabs` | The workspace's name and its tabs JSON |
 | `ask_workspace`, `search_workspace` | Answer from the workspace's own writing, with citations |
-| `read_workspace_in`, `brain_status` | Read everything in, and see how it went |
+| `read_workspace_in`, `brain_status` | Read everything in, and see how far it got |
 | `list_projects`, `create_project`, `set_project_people`, `move_to_project`, `set_projects_enabled` | Projects, and who is in them |
 | `invite_person` | An invite link to send someone |
+| `list_pack_data`, `get_pack_data`, `set_pack_data` | Data for tab types you add yourself |
 | `list_supabase_projects`, `connect_supabase` | Add a Supabase workspace |
 | `get_setup_sql`, `setup_supabase_tables` | Create or upgrade its tables |
 | `connect_cloudflare`, `create_cloudflare_workspace`, `get_cloudflare_deploy` | Add a Cloudflare workspace |
 
-So you can say "connect my Supabase project to a new workspace called Acme"
-and Claude does the rest.
+The server binds to 127.0.0.1, refuses browser origins and foreign hosts, and
+holds database keys, so it never listens on the network.
 
-## How the data is shaped
+## People, projects and who may see what
 
-- Supabase: `db/schema.sql` (idempotent; RLS on, the app uses the service key
-  from this Mac only). The first account in a new project becomes its admin;
-  after that, people need an invite.
-- Cloudflare: `cloudflare/worker.mjs` and `cloudflare/schema.sql`. The Worker
-  is the only door to D1 and checks a random token kept in your keychain.
-- This Mac: the same schema in PGlite (Postgres in WebAssembly).
+Whoever connects the database and makes the first account runs the workspace.
+They invite the rest with a link, put each person in the projects they need, and
+give each a role there: runs it, can edit, or read only. Admin can be handed to
+someone else. All of it is rows in the workspace's database, so it travels with
+the workspace rather than with a Mac.
 
-### Asking the workspace
+**Projects** are off until a workspace turns them on. They split one workspace
+into separate boards, docs, canvases and meetings inside the same database, and
+you switch between the ones you are in, under the workspace name. There is no
+"all projects" view: you see the projects you were let into.
 
-Every doc, meeting, card and canvas is cut into passages and embedded on this
-Mac with `bge-small-en-v1.5` (int8, 384 dimensions, about 34 MB, downloaded on
-first use). Searching runs both halves and fuses them by reciprocal rank:
-vectors for what a question means, words for the exact term vectors miss. The
-answer is written by Claude Code from those passages only, and there is no
-hosted fallback, because a company's own writing should not leave the machine.
+An invite link carries where the workspace is and nothing secret. Paste it into
+Alfredo (Add workspace, "I have an invite"), sign in with that email, and you
+land in the projects the invitation names.
 
-Retrieval quality comes from the chunking rather than the model: pieces follow
-the writing's own headings, overlap a little, and carry the title and heading
-path so a passage still says what it is about.
+**Sign in with Google** works on Supabase workspaces whose project has the
+Google provider on. Google will not sign anyone in inside an app window, so
+Alfredo opens the system browser and catches the answer on
+`http://127.0.0.1:29981/auth/callback`; add that to the project's redirect URLs.
 
-- **Supabase**: a `chunks` table with pgvector and Postgres full-text, under
-  the same row-level security as the work itself.
-- **Cloudflare**: vectors stored in D1, scored by the Worker, which only ever
-  looks at what the caller may open.
-- **This Mac**: the same, through PGlite with pgvector.
+## Making it yours
 
-New work is read in as it is saved. Everything from before is read in once
-from Settings, Models (or `read_workspace_in` over MCP).
-
-### Projects and who may open them
-
-Off until a workspace turns them on. Projects, their people and the
-invitations are tables next to the work (`projects`, `project_members`,
-`project_items`, `invites`), so nothing about the items themselves changes.
-Work in no project waits for an admin to file it.
-
-The rules are kept by the database, not by the app:
-
-- **Supabase**: `db/policies.sql` is row-level security over those tables. An
-  invited teammate's Alfredo holds no secret key at all; it connects with the
-  publishable key and their own sign-in, so the project list they see is
-  Postgres's answer. Applied by `npm run db:push`, or by Alfredo when it sets
-  a project up for you.
-- **Cloudflare**: the Worker keeps people, sessions, invitations and
-  memberships in D1 and answers every request accordingly. Its own token still
-  belongs to whoever created the workspace.
-- **This Mac**: one person, no sign-in, so there is nothing to enforce.
-
-An invite link carries where the workspace is and nothing secret. Paste it
-into Alfredo (Add workspace, "I have an invite"), sign in with that email, and
-you land in the projects the invitation names.
-
-### Sign in with Google
-
-Available on Supabase workspaces whose project has the Google provider turned
-on. Google will not sign anyone in inside an app window, so Alfredo opens the
-system browser and catches the answer on `http://127.0.0.1:29981/auth/callback`
--- add that to the project's redirect URLs.
-
-### Tabs JSON
+**Tabs are data, not code.** Every workspace keeps a tabs JSON in its own
+database. Rename them, hide them, reorder them, or add your own:
 
 ```json
 [
@@ -165,20 +204,53 @@ system browser and catches the answer on `http://127.0.0.1:29981/auth/callback`
 ]
 ```
 
-Any other `type` is a pack: a folder in `src/v2/packs/<name>/` whose
-`index.ts` exports `tabs`, keyed by type. Its data goes in the workspace's
-database through the pack data tools, never in the code.
+Rename the board's columns per workspace with `columns`. Any other `type` is a
+**pack**: a folder in `src/v2/packs/<name>/` whose `index.ts` exports `tabs`,
+keyed by type. A pack's data goes in the workspace's database through the pack
+data tools, never in the code, so a tab you invent travels with the workspace
+like everything else.
 
-## Security
+**Cycles** run 1, 2 or 4 weeks. When one ends you decide what happens to
+unfinished work: ask every time, roll it into the next cycle on its own, or send
+it back to the backlog. Whatever the setting, **Carry over** on the board moves
+what is unfinished whenever you say so, into the next cycle, the one running
+now, or the backlog.
 
-The server binds to 127.0.0.1 and can hold database keys, so it never listens
-on the network. The MCP endpoint refuses browser origins and foreign hosts.
+**The canvas** is React Flow JSON, so a board made elsewhere in that format
+opens unchanged. Frames carry what is inside them, the hand tool pans from
+anywhere, scroll pans and ⌘-scroll zooms.
 
-Who may see what is decided by the database (row-level security on Supabase,
-the Worker on Cloudflare), so the app is not what stands between a teammate
-and someone else's project. The secret key stays with whoever set the
-workspace up; everyone else holds a session of their own.
+**Docs** list as a grid or a table, whichever you leave it on.
+
+## What leaves your machine
+
+Nothing, unless you ask for it.
+
+| | Where it happens |
+| --- | --- |
+| Transcription | Parakeet, on this Mac. Only if you have no Parakeet *and* you set `OPENROUTER_API_KEY` does audio go to a hosted model instead |
+| Meeting write-ups | Claude Code, on this Mac, or not at all |
+| Answers from the brain | Claude Code, on this Mac, or not at all |
+| Embeddings | On this Mac, by a model downloaded once |
+| Your work | The database you chose, and nowhere else |
+
+Keys and tokens live in the macOS keychain. `.env.local` is optional; see
+`.env.local.example`.
+
+## Building on it
+
+```sh
+npm run dev              # app on 5210, server on 29982
+npm run build            # the web build
+npm run desktop:install  # build the Mac app and put it in /Applications
+npm run db:push          # apply db/schema.sql and db/policies.sql to a Supabase project
+```
+
+The app is Svelte 5 with runes. The server is Hono, one route file per
+area under `server/`, with a `Store` interface each database kind implements
+(`SqlStore` for Supabase and PGlite, `CloudflareStore` over the Worker), so a
+feature is written once and works on all three.
 
 ## License
 
-MIT
+MIT. See [LICENSE](LICENSE).
