@@ -38,6 +38,22 @@ jobs:
       - name: Which audio devices ffmpeg would pick
         run: npx tsx scripts/devices.test.mjs
 
+      # The system-audio helper is native code, so the only honest check is a
+      # compiler on the platform it is for.
+      - name: The system-audio helper compiles and runs
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          call "%ProgramFiles%\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat" || call "%ProgramFiles%\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"
+          cl /nologo /O2 /EHsc /std:c++17 native\alfredo-audio-win\main.cpp /Fe:alfredo-audio.exe /link ole32.lib
+          alfredo-audio.exe || echo "(no args: usage, as expected)"
+          echo stop | alfredo-audio.exe record %TEMP%\alfredo-rec
+          dir %TEMP%\alfredo-rec
+
+      - name: The system-audio helper compiles (macOS)
+        if: runner.os == 'macOS'
+        run: swiftc -O -o /tmp/alfredo-audio native/alfredo-audio/main.swift -framework ScreenCaptureKit -framework AVFoundation -framework CoreMedia -framework CoreGraphics && echo built
+
       - name: Does it actually run here
         run: node scripts/smoke.mjs
 
