@@ -7,6 +7,7 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/bchong12/alfredo/actions/workflows/build.yml"><img alt="Builds and runs on macOS, Windows and Linux" src="https://img.shields.io/github/actions/workflow/status/bchong12/alfredo/build.yml?branch=main&style=flat-square&label=macOS%20%C2%B7%20Windows%20%C2%B7%20Linux&labelColor=0a0a0a&color=ededed"></a>
   <a href="LICENSE"><img alt="MIT licensed" src="https://img.shields.io/badge/licence-MIT-ededed?style=flat-square&labelColor=0a0a0a"></a>
   <img alt="No subscription" src="https://img.shields.io/badge/price-%240%20forever-ededed?style=flat-square&labelColor=0a0a0a">
   <img alt="Runs on macOS, Linux and Windows" src="https://img.shields.io/badge/runs-macOS%20%C2%B7%20Linux%20%C2%B7%20Windows-ededed?style=flat-square&labelColor=0a0a0a">
@@ -57,11 +58,16 @@ npm install
 npm run dev              # http://localhost:5210
 ```
 
-On a Mac, build and install the app itself:
+Or build the desktop app for the machine you are on:
 
 ```sh
-npm run desktop:install  # /Applications/Alfredo.app
+npm run desktop:install     # macOS, straight into /Applications
+npm run desktop:build:win   # Windows, into dist-app/win-unpacked
+npm run desktop:build:linux # Linux, into dist-app/linux-unpacked
 ```
+
+Build it on the platform you want it for: npm only installs the native pieces
+(the embedding runtime, the terminal) for the machine doing the installing.
 
 The first screen asks where your first workspace should live. Nothing else is
 required to start.
