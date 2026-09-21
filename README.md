@@ -4,17 +4,20 @@ Your company's brain, in a database you own.
 
 Alfredo is a Mac app with four tabs, **Board, Docs, Canvas and Meetings**, that
 answers questions about everything written in them. It records and transcribes
-your meetings on your own machine, and it hands the whole workspace to Claude
-through an MCP server, so you can say "what did we decide about pricing" or
-"put last week's unfinished cards in this cycle" and mean it.
+your meetings on your own machine, and it hands the whole workspace to whatever
+AI you already use through an MCP server, so you can say "what did we decide
+about pricing" or "put last week's unfinished cards in this cycle" and mean it.
+Claude Code, Cursor, VS Code, Zed: anything that speaks MCP.
 
 There is no account, no server of ours, and no subscription. Each workspace
 lives in a database you choose: a folder on this Mac, your Supabase project, or
 your Cloudflare account.
 
-![What a team usually pays for this, next to Alfredo](docs/stack.svg)
+![Linear, Notion, Miro and Granola funnelling into Alfredo, which writes into your own database](docs/beams.svg)
 
 ## What it replaces
+
+![What a team usually pays for this, next to Alfredo](docs/stack.svg)
 
 | Instead of | Alfredo's tab | Their list price, per person, per month |
 | --- | --- | --- |
@@ -134,16 +137,38 @@ working tab: **New meeting** makes one you type the notes into yourself.
 Connect Google Calendar in Settings, Connections, and what is coming up appears
 above the list with a Transcribe button on each.
 
-## Claude, through MCP
+## Any MCP client, not just Claude
 
-With Alfredo running:
+Alfredo runs a plain [MCP](https://modelcontextprotocol.io) server over
+streamable HTTP at `http://127.0.0.1:29981/mcp`. There is nothing
+Claude-specific in it: any client that speaks MCP can list the tools and call
+them.
 
 ```sh
+# Claude Code
 claude mcp add --transport http alfredo http://127.0.0.1:29981/mcp
 ```
 
-Add `--header "x-workspace: <id>"` to pin one workspace; otherwise calls go to
-the active one. Then talk to it:
+```json
+// Cursor (~/.cursor/mcp.json), VS Code, Zed, Windsurf, Goose and the rest
+// take the same thing in their own config file:
+{ "mcpServers": { "alfredo": { "url": "http://127.0.0.1:29981/mcp" } } }
+```
+
+A client that only speaks stdio can bridge with
+`npx mcp-remote http://127.0.0.1:29981/mcp`. Add the header
+`x-workspace: <id>` to pin one workspace; otherwise calls go to the active one.
+
+Two of the tools matter most, and they split along exactly this line:
+
+- **`search_workspace`** hands back the passages and where each came from, and
+  nothing else. Whatever model your client runs writes the answer. This is the
+  one to use from Cursor, Zed, VS Code or your own SDK client.
+- **`ask_workspace`** writes the answer as well, using Claude Code on this Mac.
+  It needs `claude` on your PATH, because that is the only model Alfredo will
+  show a company's own writing to.
+
+Then talk to it:
 
 > "Connect my Supabase project Acme to a new workspace called Acme."
 > "What did we decide about the team plan price, and which meeting was it?"
@@ -167,6 +192,17 @@ the active one. Then talk to it:
 
 The server binds to 127.0.0.1, refuses browser origins and foreign hosts, and
 holds database keys, so it never listens on the network.
+
+### Do you need Claude at all?
+
+No. The board, docs, canvas, meetings, projects and search all work with no AI
+of any kind. Transcription is Parakeet, on your Mac. Search is the embedding
+model, on your Mac.
+
+Two things use a model, both through Claude Code, locally: writing up a meeting,
+and writing the prose answer to a question. Without it you still get the
+transcript and the passages, and any MCP client can turn those into an answer
+with its own model.
 
 ## People, projects and who may see what
 
