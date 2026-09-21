@@ -49,6 +49,17 @@ at the sizes a workspace runs at, and yours either way.
 That is not a claim that Alfredo is as good as any of them at their own game.
 It is one app, built for a team that would rather own the data and the bill.
 
+## Get it
+
+[**Download the latest release**](https://github.com/bchong12/alfredo/releases/latest)
+for macOS, Windows or Linux, unzip it, and open it. The builds are not
+code-signed, so the first launch needs one push past the warning: on macOS
+`xattr -dr com.apple.quarantine /Applications/Alfredo.app`, on Windows
+SmartScreen's *More info* then *Run anyway*. Building it yourself avoids both.
+
+If someone sent you an invite, open Alfredo, choose **Add workspace**, then
+**I have an invite**, and paste their link.
+
 ## Run it
 
 Needs Node 22 or newer.
@@ -336,9 +347,16 @@ into separate boards, docs, canvases and meetings inside the same database, and
 you switch between the ones you are in, under the workspace name. There is no
 "all projects" view: you see the projects you were let into.
 
-An invite link carries where the workspace is and nothing secret. Paste it into
-Alfredo (Add workspace, "I have an invite"), sign in with that email, and you
-land in the projects the invitation names.
+**Inviting someone.** Settings, Members, type their email, choose what they
+may do and which projects they are in, then **Copy the invitation**. That puts
+a whole message on your clipboard, not a bare token: where to download Alfredo,
+what to do with the link, and which address to sign in with. Send it however
+you like; Alfredo has no mail server and never will.
+
+The link itself carries where the workspace is and nothing secret: the
+publishable key and the invitation, both safe to read. What they can see once
+they are in is the database's decision, not the link's. It works once, for that
+address, and stops working in two weeks.
 
 **Sign in with Google** works on Supabase workspaces whose project has the
 Google provider on. Google will not sign anyone in inside an app window, so

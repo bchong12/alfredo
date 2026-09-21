@@ -127,6 +127,7 @@
         projects: Object.entries(inviteProjects).map(([id, role]) => ({ id, role })),
       })
       madeLink = r.link ?? ''
+      lastInvited = email
       inviteEmail = ''
       inviteProjects = {}
       await loadInvites()
@@ -143,6 +144,41 @@
       fail(e)
     }
   }
+  /** Where a teammate gets the app. The releases page, not a marketing site. */
+  const DOWNLOAD = 'https://github.com/bchong12/alfredo/releases/latest'
+  let invitationCopied = $state(false)
+  let lastInvited = $state('')
+
+  /**
+   * What you send someone. The link alone says nothing about what to do with
+   * it, or where to get the app it opens, so this is the whole invitation.
+   */
+  function invitation() {
+    const who = ui.me?.name ? `${ui.me.name} has invited you` : 'You have been invited'
+    const place = ui.settings?.name ?? ws?.name ?? 'a workspace'
+    return [
+      `${who} to ${place} on Alfredo.`,
+      '',
+      "Alfredo is a free app for a team's board, docs, canvases and meetings, kept in a database the team owns.",
+      '',
+      `1. Download it: ${DOWNLOAD}`,
+      '2. Open Alfredo, choose Add workspace, then "I have an invite"',
+      `3. Paste this, and sign in as ${lastInvited || 'your email address'}:`,
+      '',
+      madeLink,
+      '',
+      'It works once, for that address, and stops working in two weeks.',
+    ].join('\n')
+  }
+
+  const copyInvitation = async () => {
+    try {
+      await navigator.clipboard.writeText(invitation())
+      invitationCopied = true
+      setTimeout(() => (invitationCopied = false), 1600)
+    } catch {}
+  }
+
   const copyLink = async () => {
     try {
       await navigator.clipboard.writeText(madeLink)
@@ -685,9 +721,15 @@
               <div class="linkbox">
                 <Link size={13} />
                 <span class="mono">{madeLink}</span>
-                <button class="ghost" onclick={copyLink}>{linkCopied ? 'Copied' : 'Copy'}</button>
+                <button class="ghost" onclick={copyLink}>{linkCopied ? 'Copied' : 'Copy link'}</button>
               </div>
-              <p class="note">Send it however you like. It works once, for that email, and stops working in two weeks.</p>
+              <div class="inviteacts">
+                <button class="primary sm" onclick={copyInvitation}>{invitationCopied ? 'Copied' : 'Copy the invitation'}</button>
+                <span class="note">
+                  The invitation says where to download Alfredo and what to do with the link. Send it however you like; it works once,
+                  for that address, and stops working in two weeks.
+                </span>
+              </div>
             {/if}
           </section>
           {#if invites.filter((i) => !i.usedAt).length}
@@ -1430,6 +1472,16 @@
   .invite {
     display: flex;
     gap: 8px;
+  }
+  .inviteacts {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    margin-top: 8px;
+  }
+  .inviteacts .note {
+    margin: 0;
+    flex: 1;
   }
   .linkbox {
     display: flex;

@@ -176,12 +176,28 @@ connecting a database, and never repeat back tokens or keys.`,
 
   add(
     'ws_list',
-    "List cards (this week's), docs, canvases, meetings or members in this workspace. With project (name or id), only that project's items; each item says which project it is in.",
-    { kind: z.enum(['cards', 'docs', 'canvases', 'meetings', 'members']), project: z.string().optional() },
-    async ({ kind, project }: { kind: 'cards' | 'docs' | 'canvases' | 'meetings' | 'members'; project?: string }) => {
+    "List cards, docs, canvases, meetings or members in this workspace. Cards are this cycle's unless week says otherwise: a Monday (2026-09-21), 'backlog', or 'all' for every card there is. With project (name or id), only that project's items; each item says which project it is in.",
+    {
+      kind: z.enum(['cards', 'docs', 'canvases', 'meetings', 'members', 'card', 'doc', 'canvas', 'meeting', 'member']),
+      project: z.string().optional(),
+      week: z.string().optional(),
+    },
+    async ({ kind: given, project, week }: { kind: string; project?: string; week?: string }) => {
       const s = ws()
+      // Singular or plural: nobody should have to remember which.
+      const kind = (given.endsWith('s') ? given : `${given}s`) as 'cards' | 'docs' | 'canvases' | 'meetings' | 'members'
       if (kind === 'members') return ok(await s.members())
-      const r: any[] = kind === 'cards' ? await s.cardsIn([mondayOf()]) : kind === 'docs' ? await s.docs() : kind === 'canvases' ? await s.canvases() : await s.meetings()
+      const when = (week ?? '').trim().toLowerCase()
+      const cards = async () => {
+        if (when === 'backlog') return await s.cardsIn('backlog')
+        if (when !== 'all') return await s.cardsIn([when || mondayOf()])
+        // Every card there is: an empty week list means no weeks, not all of
+        // them, so the weeks are asked for first.
+        const weeks = [...(await s.tally()).weeks.keys()]
+        const [inCycles, waiting] = await Promise.all([weeks.length ? s.cardsIn(weeks) : [], s.cardsIn('backlog')])
+        return [...inCycles, ...waiting]
+      }
+      const r: any[] = kind === 'cards' ? await cards() : kind === 'docs' ? await s.docs() : kind === 'canvases' ? await s.canvases() : await s.meetings()
       const pid = await projectId(project)
       const map = await s.projectMap().catch(() => ({}) as Record<string, string>)
       const k = KIND_OF[kind]
@@ -289,11 +305,20 @@ connecting a database, and never repeat back tokens or keys.`,
 
   add(
     'ws_read',
-    'Read one doc (Markdown), canvas (nodes and edges), or meeting (notes and transcript) by id.',
-    { kind: z.enum(['doc', 'canvas', 'meeting']), id: z.string() },
-    async ({ kind, id }) => {
+    'Read one doc (Markdown), canvas (nodes and edges), meeting (notes and transcript) or card by id. Singular or plural, either is fine.',
+    { kind: z.enum(['doc', 'canvas', 'meeting', 'card', 'docs', 'canvases', 'meetings', 'cards']), id: z.string() },
+    async ({ kind: given, id }: { kind: string; id: string }) => {
       const s = ws()
-      return ok(kind === 'doc' ? await s.doc(id) : kind === 'canvas' ? await s.canvas(id) : await s.meeting(id))
+      const kind = given.replace(/s$|es$/, '').replace('canvase', 'canvas')
+      if (kind === 'doc') return ok(await s.doc(id))
+      if (kind === 'canva' || kind === 'canvas') return ok(await s.canvas(id))
+      if (kind === 'meeting') return ok(await s.meeting(id))
+      // A card is only ever found in a list, so this looks through the ones
+      // there are rather than asking for it by name.
+      const all = [...(await s.cardsIn([]).catch(() => [])), ...(await s.cardsIn('backlog').catch(() => []))]
+      const card = all.find((c: any) => c.id === id || c.ref === id)
+      if (!card) throw new Error(`No card ${id} in this workspace.`)
+      return ok(card)
     },
   )
 

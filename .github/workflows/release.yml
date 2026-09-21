@@ -1,0 +1,133 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The tag to build and publish
+        required: true
+
+# Somewhere for a teammate to download Alfredo from. Each platform builds its
+# own app, because npm only installs the native pieces for the machine doing
+# the installing, and the three land on one release.
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      - name: Build
+        run: |
+          npm run build
+          npm run build:server
+
+      - name: Does it actually run here
+        run: node scripts/smoke.mjs
+
+      - name: The system-audio helper (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          cmd /c "`"$vs\VC\Auxiliary\Build\vcvars64.bat`" && cl /nologo /O2 /EHsc /std:c++17 native\alfredo-audio-win\main.cpp /Fe:alfredo-audio.exe /link ole32.lib"
+          New-Item -ItemType Directory -Force -Path dist-app\helper | Out-Null
+          Move-Item alfredo-audio.exe dist-app\helper\alfredo-audio.exe
+
+      - name: The system-audio helper (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p dist-app/helper
+          swiftc -O -o dist-app/helper/alfredo-audio native/alfredo-audio/main.swift \
+            -framework ScreenCaptureKit -framework AVFoundation -framework CoreMedia -framework CoreGraphics
+
+      - name: Package
+        run: npm run desktop:build:${{ runner.os == 'Windows' && 'win' || runner.os == 'Linux' && 'linux' || 'mac' }}
+
+      - name: Zip it
+        shell: bash
+        run: |
+          tag="${{ inputs.tag || github.ref_name }}"
+          cd dist-app
+          case "${{ runner.os }}" in
+            macOS)   src=mac-arm64;    name="alfredo-$tag-macos-arm64" ;;
+            Windows) src=win-unpacked; name="alfredo-$tag-windows-x64" ;;
+            Linux)   src=linux-unpacked; name="alfredo-$tag-linux-x64" ;;
+          esac
+          [ -d helper ] && cp -R helper "$src/" || true
+          if [ "${{ runner.os }}" = "Linux" ]; then tar -czf "../$name.tar.gz" "$src"; else
+            command -v zip >/dev/null && zip -qry "../$name.zip" "$src" || 7z a -tzip "../$name.zip" "$src" >/dev/null
+          fi
+          ls -la ..
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-${{ matrix.os }}
+          path: |
+            *.zip
+            *.tar.gz
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: packages
+          merge-multiple: true
+      - run: ls -la packages
+      - name: Put them on the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ inputs.tag || github.ref_name }}"
+          notes=$(cat <<'NOTE'
+          Alfredo is a Mac, Windows and Linux app for a team's board, docs, canvases and
+          meetings, kept in a database the team owns. There is no account and no
+          subscription.
+
+          **Which file**
+
+          | | |
+          | --- | --- |
+          | macOS, Apple silicon | `*-macos-arm64.zip` |
+          | Windows, 64-bit | `*-windows-x64.zip` |
+          | Linux, 64-bit | `*-linux-x64.tar.gz` |
+
+          Unzip it and run Alfredo. On first launch it asks where your first workspace
+          should live; if someone sent you an invite, choose **Add workspace**, then
+          **I have an invite**, and paste their link.
+
+          **These builds are not code-signed.** macOS will refuse a downloaded app it
+          cannot check, so after unzipping, run this once:
+
+          ```sh
+          xattr -dr com.apple.quarantine /Applications/Alfredo.app
+          ```
+
+          Windows SmartScreen will warn for the same reason: **More info**, then **Run
+          anyway**. Or build it yourself, which is three commands and no warnings:
+          `npm ci && npm run build && npm run desktop:install`.
+          NOTE
+          )
+          gh release create "$tag" packages/* --title "Alfredo $tag" --notes "$notes" --repo "$GITHUB_REPOSITORY" || \
+          gh release upload "$tag" packages/* --clobber --repo "$GITHUB_REPOSITORY"
