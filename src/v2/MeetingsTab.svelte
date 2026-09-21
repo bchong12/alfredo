@@ -188,7 +188,11 @@
   <div class="page">
     <Header crumbs={[{ label: tabName, onclick: () => go(tabId) }, meeting.title]}>
       <span class="state">{saving === 'saving' ? 'Saving…' : ''}</span>
-      <CopyNode text={() => `# ${meeting!.title}\n\n${meeting!.notes}${meeting!.transcript ? `\n\n## Transcript\n\n${meeting!.transcript}` : ''}`} size={13} />
+      <CopyNode
+        text={() => `${meeting!.notes}${meeting!.transcript ? `\n\n## Transcript\n\n${meeting!.transcript}` : ''}`}
+        as={{ kind: 'meeting', id: meeting!.id, title: meeting!.title }}
+        size={13}
+      />
       <button class="del" title="Delete meeting" onclick={remove}><Trash2 size={13} /></button>
     </Header>
     <div class="scroll">
@@ -202,6 +206,13 @@
         <div class="tabs">
           <button class:on={view === 'notes'} onclick={() => (view = 'notes')}>Notes</button>
           <button class:on={view === 'transcript'} onclick={() => (view = 'transcript')} disabled={!meeting.transcript}>Transcript</button>
+          <span class="grow"></span>
+          <!-- Half a meeting is often the half worth pasting. -->
+          <CopyNode
+            text={() => (view === 'notes' ? meeting!.notes : (meeting!.transcript ?? ''))}
+            as={{ kind: 'meeting', id: meeting!.id, title: `${meeting!.title} (${view})` }}
+            label={view === 'notes' ? 'Copy the notes for your AI' : 'Copy the transcript for your AI'}
+          />
         </div>
         {#if view === 'notes'}
           {#key meeting.id}
@@ -712,9 +723,13 @@
   }
   .tabs {
     display: flex;
+    align-items: center;
     gap: 18px;
     border-bottom: 1px solid var(--line);
     margin: 8px 0 4px;
+  }
+  .tabs .grow {
+    flex: 1;
   }
   .tabs button {
     padding: 0 0 10px;

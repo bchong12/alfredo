@@ -259,6 +259,25 @@ A client that only speaks stdio can bridge with
 `npx mcp-remote http://127.0.0.1:29981/mcp`. Add the header
 `x-workspace: <id>` to pin one workspace; otherwise calls go to the active one.
 
+### Handing it a piece of the workspace
+
+Every copy button in Alfredo (on a card, a column, a whole cycle, a doc, a
+canvas, a meeting's notes or its transcript) copies the thing **and** the way
+back to it:
+
+```
+Alfredo · Acme · meeting “Pricing review (notes)”
+Read it again:  ws_read kind:"meeting" id:"2344c5c0-…"   (MCP header x-workspace: acme)
+Change it:      ws_write kind:"meeting" id:"2344c5c0-…"
+
+## Summary
+The team plan price will rise to $24 per seat starting in March…
+```
+
+Paste that anywhere. An assistant with Alfredo connected can follow the handle
+to read the rest or write back; one without it still has the text, which is
+what pasting usually means anyway.
+
 Two of the tools matter most, and they split along exactly this line:
 
 - **`search_workspace`** hands back the passages and where each came from, and

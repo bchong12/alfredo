@@ -159,7 +159,7 @@
     <Header crumbs={[{ label: tabName, onclick: () => go(tabId) }, doc?.title || docs.find((d) => d.id === ui.item)?.title || 'Untitled']}>
       {#if doc}
         <span class="state">{saving === 'saving' ? 'Saving…' : saving === 'conflict' ? 'Changed elsewhere: reload' : `Edited ${ago(doc.updatedAt)}`}</span>
-        <CopyNode text={() => `# ${doc!.title}\n\n${doc!.body}`} size={13} />
+        <CopyNode text={() => doc!.body} as={{ kind: 'doc', id: doc!.id, title: doc!.title }} size={13} />
         <button class="del" title="Delete doc" onclick={remove}><Trash2 size={13} /></button>
       {/if}
     </Header>

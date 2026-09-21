@@ -23,6 +23,7 @@
   import { v2, STATUSES, weekRange, type Card, type Status, type CyclesView } from './api'
   import { peek, load as fetchCached, put, prefetch, drop } from './cache'
   import { ui, openSettings } from './state.svelte'
+  import { manyForClaude } from './clip'
   import { takeFocus } from './focus'
 
   let { tabName = 'Board', columns }: { tabName?: string; columns?: string[] } = $props()
@@ -298,6 +299,9 @@
         </div>
       {/if}
     </div>
+    {#if cards?.length}
+      <CopyNode text={() => manyForClaude('card', cycleName(week), cards!.map(markdown))} label="Copy this cycle for your AI" size={13} />
+    {/if}
     {#if canEditHere() && week !== 'backlog' && openHere && cycle && !(!cycle.current && !cycle.past)}
       <div class="carry">
         <button class="btn" class:open={carrying} title="Move what is not finished out of this cycle" onclick={() => ((carrying = !carrying), (menu = false))}>
@@ -357,6 +361,12 @@
             <span class="name">{label(i)}</span>
             <span class="count">{cards ? lists[st.id].length : ''}</span>
             <span class="grow"></span>
+            {#if lists[st.id]?.length}
+              <CopyNode
+                text={() => manyForClaude('card', `${label(i)} in ${cycleName(week)}`, lists[st.id].map(markdown), `status:"${st.id}"`)}
+                label="Copy this column for your AI"
+              />
+            {/if}
             <button class="icon" title="Add a card" onclick={() => ((adding = st.id), (draft = ''))}><Plus size={13} /></button>
           </header>
           {#if adding === st.id}
@@ -390,7 +400,7 @@
                   <div class="top">
                     <span class="ref">{c.ref}</span>
                     <ProjectChip kind="card" id={c.id} project={c.project ?? null} onmoved={(p) => (lists = { ...lists, [st.id]: lists[st.id].map((x) => (x.id === c.id ? { ...x, project: p } : x)) })} />
-                    <CopyNode text={() => markdown(c)} />
+                    <CopyNode text={() => markdown(c)} as={{ kind: 'card', id: c.id, title: `${c.ref} ${c.title}` }} />
                   </div>
                   <span class="title">{c.title}</span>
                   {#if c.labels.length || c.assignee || c.body}

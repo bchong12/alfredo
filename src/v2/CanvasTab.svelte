@@ -379,6 +379,31 @@
     }
   }
 
+  /**
+   * The whole board as an outline: frames with what is in them, then the
+   * arrows, so the shape of the thinking survives the paste.
+   */
+  function whole() {
+    const say = (n: Node) => {
+      const d = n.data as any
+      return [d.title, d.body].filter(Boolean).join(': ')
+    }
+    const frames = nodes.filter((n) => n.type === 'section')
+    const inFrame = new Set<string>()
+    const out: string[] = []
+    for (const f of frames) {
+      const fr = rect(f)
+      const kids = nodes.filter((n) => n !== f && n.type !== 'section' && inside(rect(n), fr))
+      kids.forEach((k) => inFrame.add(k.id))
+      out.push(`## ${say(f) || 'Frame'}`, ...kids.map((k) => `- ${say(k)}`), '')
+    }
+    const loose = nodes.filter((n) => n.type !== 'section' && !inFrame.has(n.id))
+    if (loose.length) out.push('## Loose on the board', ...loose.map((n) => `- ${say(n)}`), '')
+    const name = (id: string) => say(nodes.find((n) => n.id === id) ?? ({ data: {} } as Node)) || id
+    if (edges.length) out.push('## Arrows', ...edges.map((e) => `- ${name(e.source)} -> ${name(e.target)}${e.label ? ` (${e.label})` : ''}`))
+    return out.join('\n')
+  }
+
   const md = () => {
     if (!one) return ''
     const d = one.data as any
@@ -439,6 +464,7 @@
         </div>
       {/if}
       {#if canvas}<ProjectPicker kind="canvas" id={canvas.id} project={canvas.project ?? null} onchange={(p) => (list = list.map((x) => (x.id === canvas?.id ? { ...x, project: p } : x)))} />{/if}
+      <CopyNode text={whole} as={{ kind: 'canvas', id: canvas.id, title: canvas.title }} label="Copy this canvas for your AI" size={13} />
       <button class="icon" title="Fit board" onclick={() => flow?.fitView({ padding: 0.12, duration: 450 })}><Shapes size={13} /></button>
       <button class="icon" title="Delete canvas" onclick={removeCanvas}><Trash2 size={13} /></button>
       <span class="state"><i class:live={saving !== 'conflict'}></i>{saving === 'saving' ? 'Saving…' : saving === 'conflict' ? 'Changed elsewhere: reload' : 'Saved'}</span>
@@ -491,7 +517,7 @@
           <div class="ih">
             <span>{one.type === 'section' ? 'Frame' : one.type === 'image' ? 'Image' : 'Object'}</span>
             <span class="grow"></span>
-            <CopyNode text={md} size={13} />
+            <CopyNode text={md} as={{ kind: 'canvas', id: canvas!.id, title: `${canvas!.title}: ${(one.data as any).title ?? 'object'}` }} size={13} />
             <button class="icon" title="Delete" onclick={removeSelected}><Trash2 size={14} /></button>
           </div>
           <input value={(one.data as any).title ?? ''} placeholder="Title" oninput={(e) => patchData(one.id, { title: e.currentTarget.value })} />
