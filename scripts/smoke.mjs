@@ -99,7 +99,11 @@ try {
   const engine = await json('/api/v2/transcribe/engine', { headers: as })
   const canRecord = engine.body?.canRecord
   check('the recorder says what it can do here', typeof canRecord === 'boolean', `canRecord=${canRecord}, hears "${engine.body?.hears?.why ?? ''}"`)
-  check('transcribing here is claimed only where it works', engine.body?.localTranscription === (process.platform === 'darwin'))
+  // Every platform can transcribe locally now: CoreML on Apple silicon, ONNX
+  // Runtime elsewhere. Which engine is live depends on what has been
+  // downloaded, and null means the app should be offering that download.
+  check('transcribing here is possible on this platform', engine.body?.localTranscription === true)
+  check('the engine says which road it takes', [null, 'fluidaudio', 'onnx'].includes(engine.body?.engine ?? null), `engine=${engine.body?.engine ?? 'none downloaded yet'}`)
 
   const mcp = await fetch(`${BASE}/mcp`, {
     method: 'POST',
