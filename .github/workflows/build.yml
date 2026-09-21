@@ -57,7 +57,10 @@ jobs:
           $code = $LASTEXITCODE
           Write-Host "helper said: $out (exit $code)"
           Get-ChildItem "$env:TEMP\alfredo-rec" | ForEach-Object { Write-Host "  wrote $($_.Name), $($_.Length) bytes" }
-          if ($out -notmatch 'done') { throw "the helper did not finish cleanly" }
+          # -match on an array filters it, so join first: this is a string test.
+          $said = ($out | Out-String)
+          if ($said -notmatch 'done') { throw "the helper did not finish cleanly: $said" }
+          if ($said -notmatch 'recording|mic-only') { throw "the helper did not say what it heard: $said" }
           if ($code -ne 0) { throw "the helper exited $code" }
 
       - name: The system-audio helper compiles (macOS)
