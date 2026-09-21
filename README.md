@@ -90,23 +90,25 @@ do. Two things are genuinely Apple's, and the app says so rather than pretending
 
 #### Hearing both sides of a call
 
-macOS hands a program the system's own audio through ScreenCaptureKit, so
-Alfredo records the room and the call and mixes them. Windows has no such
-thing: ffmpeg speaks DirectShow, and DirectShow only sees what is playing if a
-loopback device exists. Install any of the free ones and Alfredo finds it by
-itself, records it alongside the microphone, and mixes the two the same way:
+Both operating systems will hand a program the audio they are playing, and
+Alfredo asks each one in its own way, records it alongside the microphone, and
+mixes the two into a single track.
 
-- [VB-Cable](https://vb-audio.com/Cable/), then set it as the playback device
-  for the call, or
-- `virtual-audio-capturer` from
-  [screen-capture-recorder](https://github.com/rdp/screen-capture-recorder-to-video-windows-free), or
-- "Stereo Mix", if your sound card still has it (Sound settings, Recording,
-  right click, Show Disabled Devices).
+| | how | build it with |
+| --- | --- | --- |
+| macOS | ScreenCaptureKit, in `native/alfredo-audio` | `sh native/alfredo-audio/build.sh` (needs Xcode's command line tools) |
+| Windows | [WASAPI loopback](https://learn.microsoft.com/en-us/windows/win32/coreaudio/loopback-recording), in `native/alfredo-audio-win` | `native\alfredo-audio-win\build.ps1` from a Developer PowerShell (needs the MSVC build tools) |
 
-Until one of those is there, Windows records your microphone alone, and
-Meetings says so on the page rather than letting you find out afterwards. On
-Linux, route the call into a PulseAudio monitor source and point
-`CRM_AUDIO_DEVICE` at it.
+Both helpers take the same arguments and answer with the same words, so the
+server does not know which one it is talking to. Neither needs a virtual cable
+or a driver. CI compiles both on every push, and runs the Windows one.
+
+Without a helper, ffmpeg records the microphone alone, because DirectShow
+cannot see the render side by itself. Alfredo still picks up a loopback device
+if you happen to have one (VB-Cable, `virtual-audio-capturer`, Stereo Mix), and
+Meetings says on the page which of the two it is going to record, rather than
+letting you find out after an hour. On Linux, route the call into a PulseAudio
+monitor source and point `CRM_AUDIO_DEVICE` at it.
 
 Secrets live in the macOS keychain where there is one, and in a `0600` file
 beside the workspace registry where there is not.
