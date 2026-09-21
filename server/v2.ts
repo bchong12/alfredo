@@ -22,6 +22,7 @@ import * as audio from './audio'
 import { transcribe } from './ai-local'
 import { summarize, hasLocalChat, teamContext, type Summary } from './ai'
 import { parakeetAvailable } from './parakeet'
+import { download as onnxDownload, downloadState as onnxState, downloaded as onnxReady } from './parakeet-onnx'
 import { runComposio } from './composio'
 import { spawn } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
@@ -1751,15 +1752,23 @@ export function v2Routes(current: () => { workspace: Workspace; db: unknown } | 
       // Whether this machine can record at all, and whether Parakeet could
       // transcribe it here. They are separate questions with separate answers.
       canRecord: hears.can,
-      localTranscription: process.platform === 'darwin',
+      localTranscription: true,
+      // FluidAudio on Apple silicon, ONNX Runtime everywhere else, same model.
+      engine: parakeetAvailable() ? 'fluidaudio' : onnxReady() ? 'onnx' : null,
+      onnx: onnxState(),
       hears,
     })
   })
   /* Parakeet, downloaded and built once on this Mac. The script ships with
    * the app; it needs Xcode's command line tools. */
   app.post('/transcribe/install', (c) => {
-    if (process.platform !== 'darwin')
-      return c.json({ error: 'Parakeet runs on Apple silicon. On this machine, write the meeting yourself or set OPENROUTER_API_KEY to transcribe elsewhere.' }, 400)
+    // Off Apple silicon the same model comes as ONNX, which is a download
+    // rather than a build, so there is nothing to compile and nothing to
+    // apologise for.
+    if (process.platform !== 'darwin') {
+      onnxDownload().catch(() => {})
+      return c.json({ ok: true, onnx: onnxState() })
+    }
     if (parakeetAvailable()) return c.json({ ok: true, install })
     if (install.state === 'running') return c.json({ ok: true, install })
     const here = dirname(fileURLToPath(import.meta.url))

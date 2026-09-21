@@ -7,6 +7,8 @@ import { basename, dirname, join } from 'node:path'
 import { BITRATE_KBPS, TRANSCRIBE_MODEL, transcribeChunk } from './ai'
 import { localKey } from './keys'
 import { PARAKEET_ENGINE, parakeetAvailable, transcribeLocal } from './parakeet'
+import { ENGINE as ONNX_ENGINE, downloaded as onnxReady, transcribeFile as transcribeOnnx } from './parakeet-onnx'
+import { ffmpegPath } from './platform'
 
 /** Audio per request. Amigo used 30 minutes; 20 leaves more headroom. */
 const SEGMENT_SECONDS = 20 * 60
@@ -31,6 +33,18 @@ export function compress(wavPath: string): Promise<string> {
     let err = ''
     p.stderr.on('data', (d) => (err += d))
     p.on('close', (c) => (c === 0 ? res(out) : reject(new Error(`ffmpeg compress failed: ${err}`))))
+  })
+}
+
+/** Anything else, as the 16 kHz mono wav the local model reads. */
+export function toWav(path: string): Promise<string> {
+  const out = path.replace(/\.[^.]+$/, '') + '.16k.wav'
+  return new Promise((res, reject) => {
+    const p = spawn(ffmpegPath(), ['-hide_banner', '-loglevel', 'error', '-i', path, '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', '-y', out])
+    let err = ''
+    p.stderr.on('data', (d) => (err += d))
+    p.on('error', (e) => reject(e))
+    p.on('close', (c) => (c === 0 ? res(out) : reject(new Error(`ffmpeg could not convert the audio: ${err}`))))
   })
 }
 
@@ -74,11 +88,19 @@ async function transcribeOne(path: string, hint: string) {
 
 /** One request, one self-contained audio chunk, already base64. */
 export async function transcribe(audioPath: string) {
-  // On this Mac, Parakeet: the whole file, no segmenting, nothing uploaded.
-  if (parakeetAvailable()) {
+  // The same model, by whichever road this machine has. FluidAudio where it
+  // exists (CoreML, Apple silicon), ONNX Runtime everywhere else, and
+  // ALFREDO_TRANSCRIBE to say which when a machine has both. Either way
+  // nothing is uploaded.
+  const want = process.env.ALFREDO_TRANSCRIBE
+  if (parakeetAvailable() && want !== 'onnx' && want !== 'hosted') {
     const bytes = await readFile(audioPath)
     const text = await transcribeLocal(new Uint8Array(bytes), audioPath.split('.').pop() ?? 'wav')
     return { text, engine: PARAKEET_ENGINE, audioPath, parts: 1 }
+  }
+  if (onnxReady() && want !== 'hosted') {
+    const wav = audioPath.endsWith('.wav') ? audioPath : await toWav(audioPath)
+    return { text: await transcribeOnnx(wav), engine: ONNX_ENGINE, audioPath: wav, parts: 1 }
   }
   const mp3 = audioPath.endsWith('.mp3') ? audioPath : await compress(audioPath)
   const { size } = await stat(mp3)

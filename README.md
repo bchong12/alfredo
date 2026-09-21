@@ -86,7 +86,7 @@ do. Two things are genuinely Apple's, and the app says so rather than pretending
 | Meetings you write yourself | Yes | Yes |
 | A packaged desktop app | Yes | Yes. Built by CI on each one |
 | **Recording a meeting** | The room and the call together, through a small ScreenCaptureKit helper | The microphone, always. The call as well on Windows if a loopback device is installed (see below) |
-| **Transcribing it here** | Yes, Parakeet on Apple silicon | Not yet, and worth being exact about why: see below |
+| **Transcribing it here** | Parakeet through FluidAudio (CoreML) | Parakeet through ONNX Runtime, the same weights |
 
 #### Hearing both sides of a call
 
@@ -110,20 +110,26 @@ Meetings says on the page which of the two it is going to record, rather than
 letting you find out after an hour. On Linux, route the call into a PulseAudio
 monitor source and point `CRM_AUDIO_DEVICE` at it.
 
-#### Why transcription is still Mac-only, and what would change it
+#### Transcription, on whatever machine you have
 
-Parakeet is NVIDIA's model, not Apple's, and it runs anywhere: there are ONNX
-builds of the same `parakeet-tdt-0.6b-v3` Alfredo uses, and
-[sherpa-onnx](https://k2-fsa.github.io/sherpa/onnx/pretrained_models/offline-transducer/nemo-transducer-models.html)
-runs them on Windows and Linux today.
+[Parakeet](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) is NVIDIA's
+model, not Apple's, and Alfredo reaches it two ways:
 
-What is Apple-only is the path Alfredo takes to it:
-[FluidAudio](https://github.com/FluidInference/FluidAudio), a Swift CLI on
-CoreML. Alfredo already ships ONNX Runtime for embeddings, and it already has
-Linux and Windows builds, so the model and the runtime are both there; nothing
-has been wired between them yet. Until it is, Windows and Linux record the
-meeting and you either write it up yourself or set `OPENROUTER_API_KEY` to
-transcribe it elsewhere, and the app says which of those it is.
+| | through | download |
+| --- | --- | --- |
+| macOS, Apple silicon | [FluidAudio](https://github.com/FluidInference/FluidAudio), CoreML | built once by `scripts/build-parakeet.sh` |
+| Windows, Linux, Intel Macs | ONNX Runtime, which Alfredo already carries for its embeddings | the [ONNX export](https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx), about 640 MB, fetched by the Download button in Meetings |
+
+Same weights, same `parakeet-tdt-0.6b-v3`, same machine doing the work. The
+ONNX side is three graphs, run in `server/parakeet-onnx.ts`: log-mel features,
+the conformer encoder, then greedy TDT decoding, which is RNN-T with the joint
+network also saying how many frames to skip. Long recordings go through in
+thirty-second pieces that overlap by two seconds, and a piece starts at the
+first whole word after the overlap, so nothing is heard twice and no word is
+cut in half at a seam.
+
+Set `ALFREDO_TRANSCRIBE=onnx` on a Mac to use that path instead of CoreML, or
+`hosted` to skip local transcription entirely.
 
 Secrets live in the macOS keychain where there is one, and in a `0600` file
 beside the workspace registry where there is not.

@@ -26,7 +26,8 @@
   let loading = $state(!peek('/meetings'))
   type Install = { state: 'idle' | 'running' | 'done' | 'failed'; log: string }
   type Hears = { can: boolean; both: boolean; why: string }
-  let engine = $state<{ parakeet: boolean; recording: boolean; install: Install; canRecord?: boolean; localTranscription?: boolean; hears?: Hears } | null>(null)
+  type Onnx = { state: 'idle' | 'downloading' | 'ready' | 'failed'; got: number; of: number; error?: string }
+  let engine = $state<{ parakeet: boolean; recording: boolean; install: Install; canRecord?: boolean; localTranscription?: boolean; engine?: string | null; onnx?: Onnx; hears?: Hears } | null>(null)
   let upcoming = $state<{ connected: boolean; events: Event[] } | null>(null)
   let job = $state<Job | null>(null)
   let title = $state('')
@@ -47,8 +48,8 @@
   }
   load()
   async function checkEngine() {
-    engine = await v2.get<{ parakeet: boolean; recording: boolean; install: Install; canRecord?: boolean; localTranscription?: boolean; hears?: Hears }>('/transcribe/engine').catch(() => engine)
-    if (engine?.install.state === 'running') setTimeout(checkEngine, 3000)
+    engine = await v2.get<{ parakeet: boolean; recording: boolean; install: Install; canRecord?: boolean; localTranscription?: boolean; engine?: string | null; onnx?: Onnx; hears?: Hears }>('/transcribe/engine').catch(() => engine)
+    if (engine?.install.state === 'running' || engine?.onnx?.state === 'downloading') setTimeout(checkEngine, 3000)
   }
   checkEngine()
   async function download() {
@@ -245,7 +246,7 @@
     <Header crumbs={[tabName]}>
       {#if canEditHere()}
         <button class="ghost" onclick={create}><Plus size={12} /><span>New meeting</span></button>
-        <button class="primary" disabled={engine?.parakeet === false || engine?.canRecord === false} title={engine?.canRecord === false ? 'Recording needs a Mac' : ''} onclick={() => start()}><i class="dot"></i><span>Transcribe</span></button>
+        <button class="primary" disabled={engine?.canRecord === false || (engine?.parakeet === false && !engine?.engine)} title={engine?.canRecord === false ? 'Recording needs a Mac' : ''} onclick={() => start()}><i class="dot"></i><span>Transcribe</span></button>
       {/if}
     </Header>
     <div class="scroll">
@@ -268,35 +269,22 @@
             </div>
             <button class="primary sm" onclick={create}>New meeting</button>
           </div>
-        {:else if engine && engine.localTranscription === false && !engine.parakeet}
-          <div class="model">
-            <div class="mi"><Cpu size={17} /></div>
-            <div class="mt">
-              <span class="h">Transcribing here needs a Mac, for now</span>
-              <span class="s">
-                Recording works on this machine. Parakeet itself is an NVIDIA model that runs anywhere, but Alfredo runs it
-                through FluidAudio, which is Apple silicon only. Set OPENROUTER_API_KEY to transcribe elsewhere, or write the
-                meeting yourself.
-              </span>
-            </div>
-            <button class="primary sm" onclick={create}>New meeting</button>
-          </div>
-        {:else if engine && !engine.parakeet}
+        {:else if engine && !engine.parakeet && !engine.engine}
           <div class="model">
             <div class="mi"><Cpu size={17} /></div>
             <div class="mt">
               <span class="h">Download the transcription model</span>
               <span class="s">
-                {engine.install.state === 'running'
-                  ? 'Downloading and setting up Parakeet. This takes a few minutes the first time; you can keep working.'
-                  : engine.install.state === 'failed'
-                    ? 'The download did not finish. It needs Xcode command line tools (xcode-select --install); then try again.'
-                    : 'Meetings are transcribed on this Mac by Parakeet, so audio never leaves it. One download, about 600 MB.'}
+                {engine.install.state === 'running' || engine.onnx?.state === 'downloading'
+                  ? `Downloading Parakeet${engine.onnx?.state === 'downloading' ? ` (${engine.onnx.got} of ${engine.onnx.of} files)` : ''}. This takes a few minutes the first time; you can keep working.`
+                  : engine.install.state === 'failed' || engine.onnx?.state === 'failed'
+                    ? (engine.onnx?.error ?? 'The download did not finish. It needs Xcode command line tools (xcode-select --install); then try again.')
+                    : 'Meetings are transcribed on this machine by Parakeet, so audio never leaves it. One download, about 600 MB.'}
               </span>
-              {#if engine.install.state === 'running'}<div class="prog"><i></i></div>{/if}
+              {#if engine.install.state === 'running' || engine.onnx?.state === 'downloading'}<div class="prog"><i></i></div>{/if}
             </div>
-            {#if engine.install.state !== 'running'}
-              <button class="primary sm" onclick={download}>{engine.install.state === 'failed' ? 'Try again' : 'Download'}</button>
+            {#if engine.install.state !== 'running' && engine.onnx?.state !== 'downloading'}
+              <button class="primary sm" onclick={download}>{engine.install.state === 'failed' || engine.onnx?.state === 'failed' ? 'Try again' : 'Download'}</button>
             {/if}
           </div>
         {/if}
@@ -321,7 +309,7 @@
                 <span class="bar"></span>
                 <div class="et"><span class="h">{ev.title}</span><span class="s">{when(ev.start)}{ev.people ? ` · ${ev.people} people` : ''}</span></div>
                 <span class="soon">{until(ev.start)}</span>
-                <button class="primary sm" disabled={engine?.parakeet === false || engine?.canRecord === false} onclick={() => start(ev.title)}><i class="dot"></i>Transcribe</button>
+                <button class="primary sm" disabled={engine?.canRecord === false || (engine?.parakeet === false && !engine?.engine)} onclick={() => start(ev.title)}><i class="dot"></i>Transcribe</button>
               </div>
             {/each}
           {/if}
