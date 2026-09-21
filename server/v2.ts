@@ -1748,6 +1748,8 @@ export function v2Routes(current: () => { workspace: Workspace; db: unknown } | 
   /* Parakeet, downloaded and built once on this Mac. The script ships with
    * the app; it needs Xcode's command line tools. */
   app.post('/transcribe/install', (c) => {
+    if (process.platform !== 'darwin')
+      return c.json({ error: 'Parakeet runs on Apple silicon. On this machine, write the meeting yourself or set OPENROUTER_API_KEY to transcribe elsewhere.' }, 400)
     if (parakeetAvailable()) return c.json({ ok: true, install })
     if (install.state === 'running') return c.json({ ok: true, install })
     const here = dirname(fileURLToPath(import.meta.url))

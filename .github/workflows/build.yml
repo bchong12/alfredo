@@ -1,0 +1,49 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Alfredo claims to run on macOS, Windows and Linux. This is the claim being
+# checked: each one installs it, builds it, packages the desktop app, and then
+# starts the server and writes to a workspace.
+jobs:
+  build:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      - name: Types
+        run: npx tsc --noEmit
+      - name: Components
+        run: npx svelte-check --threshold error
+
+      - name: Build
+        run: |
+          npm run build
+          npm run build:server
+
+      - name: Does it actually run here
+        run: node scripts/smoke.mjs
+
+      - name: Package the desktop app
+        run: npm run desktop:build:${{ runner.os == 'Windows' && 'win' || runner.os == 'Linux' && 'linux' || 'mac' }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: alfredo-${{ matrix.os }}
+          path: dist-app/*/
+          retention-days: 7
+          if-no-files-found: error

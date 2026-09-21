@@ -78,18 +78,19 @@ do. Two things are genuinely Apple's, and the app says so rather than pretending
 | The brain: chunking, embeddings, hybrid search | Yes | Yes. The embedding model has Linux and Windows builds |
 | MCP server for your own AI | Yes | Yes |
 | Meetings you write yourself | Yes | Yes |
-| **Recording a meeting** | Yes, room and call together | No. System audio comes from ScreenCaptureKit |
-| **Transcribing it here** | Yes, Parakeet on Apple silicon | No. Set `OPENROUTER_API_KEY` to transcribe elsewhere instead |
-| **A packaged desktop app** | Yes | Not yet. Electron is cross-platform; only the build target is set up for macOS |
+| A packaged desktop app | Yes | Yes. Built by CI on each one |
+| **Recording a meeting** | The room and the call together | The microphone: DirectShow on Windows, PulseAudio on Linux. System audio needs ScreenCaptureKit, which is Apple's |
+| **Transcribing it here** | Yes, Parakeet on Apple silicon | Not yet. Set `OPENROUTER_API_KEY` to transcribe elsewhere, or write the meeting yourself |
 
 Secrets live in the macOS keychain where there is one, and in a `0600` file
 beside the workspace registry where there is not.
 
-Checked by running the server with the platform reported as Linux: workspaces,
-docs, meetings, the local PGlite database and the MCP server all work, and
-Meetings says recording needs a Mac instead of offering a download that cannot
-run. Nobody has yet run it on real Linux or Windows hardware, so if you do, say
-how it went.
+Checked on every push, on all three: `.github/workflows/build.yml` installs
+Alfredo on macOS, Windows and Linux, type-checks it, builds it, packages the
+desktop app, and then runs `scripts/smoke.mjs`, which starts the server, makes
+a workspace, writes a doc, a card and a meeting into the local database and
+reads them back, and asks the MCP server for its tools. Run it yourself with
+`npm run build:server && node scripts/smoke.mjs`.
 
 ## Everything goes through the database
 

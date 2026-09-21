@@ -1,6 +1,8 @@
-// Alfredo as a Mac app: one window around the same UI, with the local server
-// started alongside it. In development it loads Vite for hot reload; packaged,
-// it serves the built files itself.
+// Alfredo as a desktop app: one window around the same UI, with the local
+// server started alongside it. In development it loads Vite for hot reload;
+// packaged, it serves the built files itself. macOS, Windows and Linux differ
+// in two small ways here, both marked WIN below: where PATH comes from, and
+// whether closing the last window quits.
 const { app, BrowserWindow, shell, nativeTheme, screen, session, desktopCapturer, systemPreferences } = require('electron')
 const { spawn } = require('node:child_process')
 const { join } = require('node:path')
@@ -22,6 +24,9 @@ let win = null
 /** Login-shell PATH, so `claude`, `ffmpeg` and node are found inside sessions
  *  the same way they are in Terminal. Finder launches carry almost none. */
 function loginEnv() {
+  // WIN: a Windows process already inherits the user's PATH, and there is no
+  // login shell to ask.
+  if (process.platform === 'win32') return strip({ ...process.env })
   try {
     const out = require('node:child_process').execFileSync(process.env.SHELL || '/bin/zsh', ['-lic', 'env'], {
       encoding: 'utf8', timeout: 8000,
@@ -69,7 +74,8 @@ async function ensureServer() {
   const args = [...(ef ? ['--env-file', ef] : []), ...entry]
   // node-pty's spawn helper loses its execute bit in transit; every launch
   // puts it back rather than hoping the install did.
-  for (const arch of ['darwin-arm64', 'darwin-x64']) {
+  // Only a POSIX build has a spawn-helper that needs the executable bit.
+  for (const arch of process.platform === 'win32' ? [] : ['darwin-arm64', 'darwin-x64', 'linux-x64', 'linux-arm64']) {
     try {
       chmodSync(join(ROOT, 'node_modules/node-pty/prebuilds', arch, 'spawn-helper'), 0o755)
     } catch {}
@@ -84,7 +90,9 @@ async function ensureServer() {
 async function ensureUi() {
   if (!DEV) return
   if (await up(UI)) return
-  spawn(process.env.SHELL || '/bin/zsh', ['-lic', 'npx vite --port 5210'], { cwd: ROOT, stdio: 'ignore', detached: false })
+  const dev = 'npx vite --port 5210'
+  if (process.platform === 'win32') spawn(dev, { cwd: ROOT, stdio: 'ignore', shell: true })
+  else spawn(process.env.SHELL || '/bin/zsh', ['-lic', dev], { cwd: ROOT, stdio: 'ignore', detached: false })
   for (let i = 0; i < 60; i++) {
     if (await up(UI)) return
     await new Promise((r) => setTimeout(r, 500))

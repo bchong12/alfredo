@@ -1,7 +1,8 @@
 // Secrets for workspace connections live in the macOS keychain, never in
 // workspaces.json. The registry says *where* a workspace lives; the keychain
-// holds the token that lets this Mac in. Off macOS (tests, CI) it falls back
-// to a 0600 file next to the registry so the app still runs.
+// holds the token that lets this machine in. Off macOS (Windows, Linux, CI)
+// it falls back to a file beside the registry, inside the user's own profile,
+// locked to the owner where the filesystem has a way to say that.
 
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync, chmodSync, mkdirSync } from 'node:fs'
@@ -46,7 +47,11 @@ export function setSecret(account: string, value: string) {
   all[account] = value
   mkdirSync(appHome(), { recursive: true })
   writeFileSync(FALLBACK(), JSON.stringify(all, null, 2))
-  chmodSync(FALLBACK(), 0o600)
+  // Windows has no mode bits worth setting; the file sits in the user's own
+  // profile, which is the same fence NTFS would give it.
+  try {
+    chmodSync(FALLBACK(), 0o600)
+  } catch {}
 }
 
 export function deleteSecret(account: string) {

@@ -16,7 +16,10 @@
     "build:server": "esbuild server/index.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist-server/index.mjs --external:node-pty --external:@electric-sql/pglite --external:@huggingface/transformers --external:@electric-sql/pglite-pgvector --external:onnxruntime-node --external:sharp --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\"",
     "desktop:build": "npm run build:desktop-ui && npm run build:server && electron-builder --mac --dir",
     "desktop:install": "npm run desktop:build && (osascript -e 'quit app \"Alfredo\"' >/dev/null 2>&1; sleep 2; rm -rf /Applications/Alfredo.app && cp -R dist-app/mac-arm64/Alfredo.app /Applications/ && open -a /Applications/Alfredo.app && echo installed)",
-    "build:desktop-ui": "vite build --mode desktop"
+    "build:desktop-ui": "vite build --mode desktop",
+    "desktop:build:mac": "npm run build:desktop-ui && npm run build:server && electron-builder --mac --dir",
+    "desktop:build:win": "npm run build:desktop-ui && npm run build:server && electron-builder --win --dir",
+    "desktop:build:linux": "npm run build:desktop-ui && npm run build:server && electron-builder --linux --dir"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.8",
@@ -61,7 +64,7 @@
   },
   "main": "desktop/main.cjs",
   "build": {
-    "appId": "app.alfredo.desktop",
+    "appId": "design.purist.alfredo",
     "productName": "Alfredo",
     "asar": false,
     "directories": {
@@ -77,13 +80,8 @@
       "package.json",
       "!desktop/icon/alfredo.iconset",
       "!desktop/icon/icon.png",
-      "!node_modules/onnxruntime-node/bin/napi-v6/win32",
-      "!node_modules/onnxruntime-node/bin/napi-v6/linux",
-      "!node_modules/onnxruntime-node/bin/napi-v6/darwin/x64",
       "!node_modules/onnxruntime-web",
-      "!node_modules/@img/sharp-libvips*",
-      "!node_modules/@img/sharp-win32*",
-      "!node_modules/@img/sharp-linux*"
+      "!node_modules/@img/sharp-libvips*"
     ],
     "mac": {
       "category": "public.app-category.developer-tools",
@@ -94,7 +92,39 @@
       "identity": null,
       "extendInfo": {
         "NSMicrophoneUsageDescription": "Alfredo records meetings and dictation on this Mac."
-      }
+      },
+      "files": [
+        "!node_modules/onnxruntime-node/bin/napi-v6/win32",
+        "!node_modules/onnxruntime-node/bin/napi-v6/linux",
+        "!node_modules/@img/sharp-win32*",
+        "!node_modules/@img/sharp-linux*",
+        "!node_modules/onnxruntime-node/bin/napi-v6/darwin/x64"
+      ]
+    },
+    "win": {
+      "icon": "desktop/icon/icon.png",
+      "target": [
+        "dir"
+      ],
+      "files": [
+        "!node_modules/onnxruntime-node/bin/napi-v6/darwin",
+        "!node_modules/onnxruntime-node/bin/napi-v6/linux",
+        "!node_modules/@img/sharp-darwin*",
+        "!node_modules/@img/sharp-linux*"
+      ]
+    },
+    "linux": {
+      "icon": "desktop/icon/icon.png",
+      "category": "Office",
+      "target": [
+        "dir"
+      ],
+      "files": [
+        "!node_modules/onnxruntime-node/bin/napi-v6/darwin",
+        "!node_modules/onnxruntime-node/bin/napi-v6/win32",
+        "!node_modules/@img/sharp-darwin*",
+        "!node_modules/@img/sharp-win32*"
+      ]
     }
   },
   "license": "MIT",

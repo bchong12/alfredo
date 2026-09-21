@@ -1,22 +1,25 @@
-// Recording on this Mac.
+// Recording.
 //
 // Two backends. The native one is a small ScreenCaptureKit helper
 // (native/alfredo-audio) that writes system audio and the microphone to two
 // wav files with no driver installed: it hears both sides of a call the way
 // the OS itself would. When that helper is not built, ffmpeg records the
 // microphone alone from an avfoundation device, which is what this file did
-// before. Either way the result is one 16 kHz mono wav for the transcriber.
+// before. Off a Mac there is no helper, so it is always the microphone:
+// DirectShow on Windows, PulseAudio on Linux, chosen in platform.ts. Either
+// way the result is one 16 kHz mono wav for the transcriber.
 
 import { spawn, type ChildProcess } from 'node:child_process'
 import { existsSync, mkdirSync, statSync, rmSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { appHome, audioHelper } from './home'
+import { MAC, WINDOWS, audioFormat, defaultInput, ffmpegPath, listArgs } from './platform'
 
 const DIR = resolve(process.env.CRM_RECORDINGS_DIR ?? join(appHome(), 'recordings'))
 const DEVICE = process.env.CRM_AUDIO_DEVICE ?? '1'
 const HELPER = audioHelper()
-const FFMPEG = ['/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg', '/usr/bin/ffmpeg'].find(existsSync) ?? 'ffmpeg'
+const FFMPEG = ffmpegPath()
 
 export type Recording = {
   id: string
@@ -43,31 +46,47 @@ export function currentRecording() {
 
 export function listDevices(): Promise<string> {
   return new Promise((res) => {
-    const p = spawn(FFMPEG, ['-f', 'avfoundation', '-list_devices', 'true', '-i', ''])
+    const p = spawn(FFMPEG, listArgs())
     let out = ''
     p.stderr.on('data', (d) => (out += d))
     p.on('close', () => res(out))
+    // No ffmpeg on this machine is an ordinary state, not a reason to bring
+    // the server down: everything except recording still works.
+    p.on('error', () => res(''))
   })
 }
+
+/** Is there an ffmpeg to record with at all? */
+export const ffmpegAvailable = () => !WINDOWS ? existsSync(FFMPEG) || FFMPEG === 'ffmpeg' : true
 
 /**
  * Which avfoundation input is the microphone. Device indexes move as virtual
  * devices (Teams, Zoom) come and go, so a number in .env.local goes stale;
  * the name does not. Resolved once, lazily.
  */
-let micDevice = DEVICE
+let micInput = process.env.CRM_AUDIO_DEVICE ? (MAC ? `:${DEVICE}` : DEVICE) : defaultInput()
 let resolvedMic = false
 async function resolveMic() {
   if (resolvedMic) return
   resolvedMic = true
-  const out = await listDevices()
+  if (process.env.CRM_AUDIO_DEVICE) return
+  const out = await listDevices().catch(() => '')
+  if (WINDOWS) {
+    // DirectShow prints every device as "Name" (audio) on its own line, and
+    // wants that name back, not an index.
+    const names = [...out.matchAll(/"([^"]+)"\s*\(audio\)/g)].map((m) => m[1])
+    const mic = names.find((n) => /microphone|mic\b|input|array/i.test(n)) ?? names[0]
+    if (mic) micInput = `audio=${mic}`
+    return
+  }
+  if (!MAC) return // PulseAudio's default source is the right answer on Linux
   const audio = out.split('\n').filter((l) => /\[\d+\] /.test(l) && !/video/i.test(l))
   const rows = audio.slice(audio.findIndex((l) => /audio devices/i.test(l)) + 1)
   const parsed = rows.map((l) => /\[(\d+)\] (.*)$/.exec(l)).filter(Boolean).map((m) => ({ idx: m![1], name: m![2] }))
   const byEnv = parsed.find((d) => d.idx === DEVICE)
   if (byEnv && /mic/i.test(byEnv.name)) return
   const mic = parsed.find((d) => /microphone|built-in|mic\b/i.test(d.name))
-  if (mic) micDevice = mic.idx
+  if (mic) micInput = `:${mic.idx}`
 }
 
 export function start(id: string, micOnly = false) {
@@ -87,6 +106,10 @@ export function start(id: string, micOnly = false) {
     })
     let err = ''
     proc.stderr!.on('data', (d) => (err += d))
+    proc.on('error', (e) => {
+      console.error(`[audio] could not start the recorder: ${(e as Error).message}`)
+      if (current?.id === id) current = null
+    })
     proc.on('close', (code) => {
       if (code && err.trim()) console.error(`[audio] alfredo-audio exited ${code}: ${err.trim().slice(-400)}`)
       if (current?.id === id) current = null
@@ -97,11 +120,15 @@ export function start(id: string, micOnly = false) {
 
   const proc = spawn(FFMPEG, [
     '-hide_banner', '-loglevel', 'error',
-    '-f', 'avfoundation', '-i', `:${micDevice}`,
+    '-f', audioFormat(), '-i', micInput,
     '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', '-y', path,
   ])
   let stderr = ''
   proc.stderr.on('data', (d) => (stderr += d))
+  proc.on('error', (e) => {
+    console.error(`[audio] could not start ${FFMPEG}: ${(e as Error).message}`)
+    if (current?.id === id) current = null
+  })
   proc.on('close', (code) => {
     if (code !== 0 && code !== 255 && stderr.trim()) console.error(`[audio] ffmpeg exited ${code}: ${stderr.trim()}`)
     if (current?.id === id) current = null

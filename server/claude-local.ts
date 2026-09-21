@@ -3,27 +3,19 @@
 // `claude -p` a person would run, with the prompt on stdin and the answer as
 // JSON on stdout. The hosted model on the public site stays as it was.
 
-import { spawn } from 'node:child_process'
 import { jsonrepair } from 'jsonrepair'
 import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { workspaceFolder } from './home'
+import { WINDOWS, onPath, runAsUser } from './platform'
 
-const SHELL = process.env.SHELL || '/bin/zsh'
 const MODEL = process.env.ALFRED_LOCAL_MODEL ?? 'claude-sonnet-5'
 
 let known: boolean | null = null
-/** Is `claude` on the login shell's PATH? Checked once. */
+/** Is `claude` on PATH, as a terminal would see it? Checked once. */
 export async function claudeAvailable(): Promise<boolean> {
   if (known !== null) return known
-  known = await new Promise<boolean>((resolve) => {
-    const p = spawn(SHELL, ['-lic', 'command -v claude'], { env: cleanEnv() })
-    let out = ''
-    p.stdout.on('data', (d) => (out += d))
-    p.on('exit', () => resolve(out.trim().length > 0))
-    p.on('error', () => resolve(false))
-    setTimeout(() => resolve(false), 8000)
-  })
+  known = await onPath('claude')
   return known
 }
 
@@ -45,7 +37,8 @@ export async function claudeChat(prompt: string, schema?: object, maxTokens?: nu
   const args = ['-p', '--output-format', 'json', '--model', MODEL, '--allowedTools', '', '--permission-mode', 'default']
   const cwd = workspaceFolder()
   const out = await new Promise<{ stdout: string; stderr: string; code: number }>((resolve) => {
-    const p = spawn(SHELL, ['-lic', `claude ${args.map((a) => `'${a}'`).join(' ')}`], { cwd, env: cleanEnv() })
+    const quote = (a: string) => (WINDOWS ? (a === '' ? '""' : /[\s"]/.test(a) ? `"${a.replace(/"/g, '\\"')}"` : a) : `'${a}'`)
+    const p = runAsUser(`claude ${args.map(quote).join(' ')}`, { cwd, env: cleanEnv() })
     let stdout = ''
     let stderr = ''
     p.stdout.on('data', (d) => (stdout += d))
