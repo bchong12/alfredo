@@ -42,13 +42,21 @@ jobs:
       # compiler on the platform it is for.
       - name: The system-audio helper compiles and runs
         if: runner.os == 'Windows'
-        shell: cmd
+        shell: pwsh
         run: |
-          call "%ProgramFiles%\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat" || call "%ProgramFiles%\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"
-          cl /nologo /O2 /EHsc /std:c++17 native\alfredo-audio-win\main.cpp /Fe:alfredo-audio.exe /link ole32.lib
-          alfredo-audio.exe || echo "(no args: usage, as expected)"
-          echo stop | alfredo-audio.exe record %TEMP%\alfredo-rec
-          dir %TEMP%\alfredo-rec
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vs) { throw "no MSVC on this runner" }
+          Write-Host "building with $vs"
+          cmd /c "`"$vs\VC\Auxiliary\Build\vcvars64.bat`" && cl /nologo /O2 /EHsc /std:c++17 native\alfredo-audio-win\main.cpp /Fe:alfredo-audio.exe /link ole32.lib"
+          if (-not (Test-Path alfredo-audio.exe)) { throw "the helper did not build" }
+          # It should say what it heard, write its two files, and finish its
+          # wav headers when the pipe closes. A runner has no audio device, so
+          # 'mic-only' is the right answer here; a crash would not be.
+          $out = "stop" | & .\alfredo-audio.exe record "$env:TEMP\alfredo-rec"
+          Write-Host "helper said: $out"
+          if ($LASTEXITCODE -ne 0) { throw "the helper exited $LASTEXITCODE" }
+          if ($out -notmatch 'done') { throw "the helper did not finish cleanly" }
 
       - name: The system-audio helper compiles (macOS)
         if: runner.os == 'macOS'
