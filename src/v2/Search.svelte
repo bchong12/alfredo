@@ -23,6 +23,34 @@
   let idx = $state(0)
   let asking = $state(false)
   let answer = $state<Answer | null>(null)
+
+  /**
+   * The answer comes back as Markdown, because that is how a model writes.
+   * Bold, `code` and bullets are the only things it reaches for, so those are
+   * the only things drawn; anything else stays as it was typed rather than
+   * showing its own asterisks.
+   */
+  function said(md: string) {
+    return md
+      .split('\n')
+      .map((raw) => raw.trim())
+      .filter(Boolean)
+      .map((line) => {
+        const bullet = /^([-*]|\d+\.)\s+/.test(line)
+        const text = bullet ? line.replace(/^([-*]|\d+\.)\s+/, '') : line
+        const parts = text
+          .split(/(\*\*[^*]+\*\*|`[^`]+`)/g)
+          .filter(Boolean)
+          .map((t) =>
+            t.startsWith('**') && t.endsWith('**')
+              ? { t: t.slice(2, -2), b: true, c: false }
+              : t.startsWith('`') && t.endsWith('`')
+                ? { t: t.slice(1, -1), b: false, c: true }
+                : { t, b: false, c: false },
+          )
+        return { bullet, parts }
+      })
+  }
   let askError = $state('')
 
   /** A question, rather than a name to find. */
@@ -101,7 +129,15 @@
         {#if askError}
           <p class="err">{askError}</p>
         {:else if answer}
-          <p class="text">{answer.answer}</p>
+          <div class="text">
+            {#each said(answer.answer) as line}
+              {#if line.bullet}
+                <p class="bullet">{#each line.parts as t}{#if t.b}<b>{t.t}</b>{:else if t.c}<code>{t.t}</code>{:else}{t.t}{/if}{/each}</p>
+              {:else}
+                <p>{#each line.parts as t}{#if t.b}<b>{t.t}</b>{:else if t.c}<code>{t.t}</code>{:else}{t.t}{/if}{/each}</p>
+              {/if}
+            {/each}
+          </div>
           {#if answer.citations.length}
             <div class="cites">
               {#each answer.citations as c (c.kind + c.itemId)}
@@ -197,6 +233,39 @@
     font-size: 11px;
     color: var(--muted);
   }
+  .text p {
+    margin: 0 0 8px;
+  }
+  .text p:last-child {
+    margin-bottom: 0;
+  }
+  .text .bullet {
+    padding-left: 16px;
+    position: relative;
+    margin-bottom: 4px;
+  }
+  .text .bullet::before {
+    content: '';
+    position: absolute;
+    left: 4px;
+    top: 9px;
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: var(--muted);
+  }
+  .text b {
+    font-weight: 600;
+    color: var(--ink);
+  }
+  .text code {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    background: var(--raised);
+    border: 1px solid var(--line);
+    border-radius: var(--r-sm);
+    padding: 1px 5px;
+  }
   .answer {
     padding: 12px 16px;
     border-bottom: 1px solid var(--line);
@@ -211,7 +280,6 @@
     font-size: 13px;
     line-height: 1.55;
     color: var(--ink);
-    white-space: pre-wrap;
   }
   .cites {
     display: flex;

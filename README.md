@@ -1,6 +1,21 @@
-# Alfredo
+<p align="center">
+  <img src="docs/wordmark.svg" alt="Alfredo" width="620">
+</p>
 
-Your company's brain, in a database you own.
+<p align="center">
+  <b>Your company's brain, in a database you own.</b>
+</p>
+
+<p align="center">
+  <a href="LICENSE"><img alt="MIT licensed" src="https://img.shields.io/badge/licence-MIT-ededed?style=flat-square&labelColor=0a0a0a"></a>
+  <img alt="No subscription" src="https://img.shields.io/badge/price-%240%20forever-ededed?style=flat-square&labelColor=0a0a0a">
+  <img alt="Runs on macOS" src="https://img.shields.io/badge/macOS-Apple%20silicon-ededed?style=flat-square&labelColor=0a0a0a">
+  <img alt="Works with any MCP client" src="https://img.shields.io/badge/MCP-any%20client-ededed?style=flat-square&labelColor=0a0a0a">
+</p>
+
+<p align="center">
+  <img src="docs/hero.png" alt="Asking the workspace a question and getting an answer with citations to the doc and the meeting it came from" width="960">
+</p>
 
 Alfredo is a Mac app with four tabs, **Board, Docs, Canvas and Meetings**, that
 answers questions about everything written in them. It records and transcribes
@@ -13,11 +28,9 @@ There is no account, no server of ours, and no subscription. Each workspace
 lives in a database you choose: a folder on this Mac, your Supabase project, or
 your Cloudflare account.
 
-![Linear, Notion, Miro and Granola funnelling into Alfredo, which writes into your own database](docs/beams.svg)
-
 ## What it replaces
 
-![What a team usually pays for this, next to Alfredo](docs/stack.svg)
+![Linear, Notion, Miro and Granola orbiting Alfredo, with Board, Docs, Canvas and Meetings orbiting inside them](docs/orbit.svg)
 
 | Instead of | Alfredo's tab | Their list price, per person, per month |
 | --- | --- | --- |
@@ -54,6 +67,8 @@ The first screen asks where your first workspace should live. Nothing else is
 required to start.
 
 ## Everything goes through the database
+
+![Four subscriptions streaming into Alfredo, and Alfredo streaming out into this Mac, Supabase or Cloudflare D1](docs/beams.svg)
 
 There is no Alfredo backend. The app talks to one database per workspace, and
 every last thing it knows lives in there: cards, docs, canvases, meetings,
@@ -133,6 +148,13 @@ read into the brain, so the next question can quote it.
 Meetings offers to download Parakeet the first time, about 600 MB, needing
 Xcode's command line tools. No Parakeet and no Claude Code still leaves you a
 working tab: **New meeting** makes one you type the notes into yourself.
+
+![A meeting's write-up: summary, decisions, action items with owners and dates](docs/meeting-notes.png)
+
+The transcript is one click away, and it is the only copy of the meeting that
+survives:
+
+![The same meeting's transcript, transcribed on this Mac by Parakeet](docs/meeting-transcript.png)
 
 Connect Google Calendar in Settings, Connections, and what is coming up appears
 above the list with a Transcribe button on each.

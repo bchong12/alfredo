@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="230" viewBox="0 0 1280 230" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Helvetica, Arial, sans-serif">
+<rect width="1280" height="230" rx="18" fill="#0a0a0a"/>
+<g transform="translate(444 62) scale(0.62)" fill="#ededed"><rect x="39.4" y="0.652" width="72.195" height="26.45" rx="6"/><rect x="2.787" y="37.251" width="35.598" height="26.45" rx="6"/><rect x="75.982" y="37.251" width="35.598" height="26.45" rx="6"/><rect x="2.787" y="73.849" width="108.793" height="26.45" rx="6"/><rect x="2.787" y="110.447" width="35.598" height="26.45" rx="6"/><rect x="75.982" y="110.447" width="35.598" height="26.45" rx="6"/><rect x="2.787" y="147.045" width="35.598" height="26.45" rx="6"/><rect x="75.982" y="147.045" width="35.598" height="26.45" rx="6"/></g>
+<text x="550" y="140" fill="#ededed" font-size="86" font-weight="600" letter-spacing="-3.4">Alfredo</text>
+</svg>
