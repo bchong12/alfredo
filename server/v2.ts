@@ -1742,8 +1742,14 @@ export function v2Routes(current: () => { workspace: Workspace; db: unknown } | 
   // Recording and Parakeet are the one part of Alfredo that needs a Mac: system
   // audio comes from ScreenCaptureKit and Parakeet runs on Apple silicon. The
   // app says so rather than offering a download that cannot work.
-  app.get('/transcribe/engine', (c) =>
-    c.json({ parakeet: parakeetAvailable(), recording: audio.isRecording(), install, canRecord: process.platform === 'darwin' }),
+  app.get('/transcribe/engine', async (c) =>
+    c.json({
+      parakeet: parakeetAvailable(),
+      recording: audio.isRecording(),
+      install,
+      canRecord: process.platform === 'darwin',
+      hears: await audio.hearing().catch(() => ({ can: false, both: false, why: '' })),
+    }),
   )
   /* Parakeet, downloaded and built once on this Mac. The script ships with
    * the app; it needs Xcode's command line tools. */

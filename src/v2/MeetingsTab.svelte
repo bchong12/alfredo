@@ -25,7 +25,8 @@
   let meetings = $state<MeetingSummary[]>(peek<MeetingSummary[]>('/meetings') ?? [])
   let loading = $state(!peek('/meetings'))
   type Install = { state: 'idle' | 'running' | 'done' | 'failed'; log: string }
-  let engine = $state<{ parakeet: boolean; recording: boolean; install: Install; canRecord?: boolean } | null>(null)
+  type Hears = { can: boolean; both: boolean; why: string }
+  let engine = $state<{ parakeet: boolean; recording: boolean; install: Install; canRecord?: boolean; hears?: Hears } | null>(null)
   let upcoming = $state<{ connected: boolean; events: Event[] } | null>(null)
   let job = $state<Job | null>(null)
   let title = $state('')
@@ -46,7 +47,7 @@
   }
   load()
   async function checkEngine() {
-    engine = await v2.get<{ parakeet: boolean; recording: boolean; install: Install; canRecord?: boolean }>('/transcribe/engine').catch(() => engine)
+    engine = await v2.get<{ parakeet: boolean; recording: boolean; install: Install; canRecord?: boolean; hears?: Hears }>('/transcribe/engine').catch(() => engine)
     if (engine?.install.state === 'running') setTimeout(checkEngine, 3000)
   }
   checkEngine()
@@ -220,7 +221,10 @@
       {#if job.state === 'recording'}
         <div class="rec"><i></i><span>Listening</span><b>{clock(now - job.startedAt)}</b></div>
         <input class="mtitle big" placeholder="Name this meeting" bind:value={title} />
-        <p class="note">Speech is turned into text on this Mac when you stop. The audio is deleted right after; only the transcript and notes are kept.</p>
+        <p class="note">
+          Recording {engine?.hears?.why ?? 'this machine'}. Speech is turned into text here when you stop; the audio is deleted right
+          after, and only the transcript and notes are kept.
+        </p>
         <div class="recorder">
           <div class="wave">{#each Array(14) as _, i}<span style:height="{6 + ((i * 7 + Math.floor(now / 300)) % 20)}px"></span>{/each}</div>
           <span class="t">{clock(now - job.startedAt)}</span>
@@ -246,6 +250,15 @@
     </Header>
     <div class="scroll">
       <div class="home">
+        {#if engine && engine.canRecord !== false && engine.hears && !engine.hears.both}
+          <div class="model quiet">
+            <div class="mi"><Cpu size={17} /></div>
+            <div class="mt">
+              <span class="h">This machine hears one side of a call</span>
+              <span class="s">Recording picks up {engine.hears.why}.</span>
+            </div>
+          </div>
+        {/if}
         {#if engine && engine.canRecord === false}
           <div class="model">
             <div class="mi"><Cpu size={17} /></div>
@@ -347,6 +360,11 @@
     display: flex;
     flex-direction: column;
     gap: 32px;
+  }
+  /* The same card, saying something smaller: a limit, not a thing to do. */
+  .model.quiet {
+    background: none;
+    border-style: dashed;
   }
   .model {
     display: flex;

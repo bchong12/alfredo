@@ -85,8 +85,28 @@ do. Two things are genuinely Apple's, and the app says so rather than pretending
 | MCP server for your own AI | Yes | Yes |
 | Meetings you write yourself | Yes | Yes |
 | A packaged desktop app | Yes | Yes. Built by CI on each one |
-| **Recording a meeting** | The room and the call together | The microphone: DirectShow on Windows, PulseAudio on Linux. System audio needs ScreenCaptureKit, which is Apple's |
+| **Recording a meeting** | The room and the call together, through a small ScreenCaptureKit helper | The microphone, always. The call as well on Windows if a loopback device is installed (see below) |
 | **Transcribing it here** | Yes, Parakeet on Apple silicon | Not yet. Set `OPENROUTER_API_KEY` to transcribe elsewhere, or write the meeting yourself |
+
+#### Hearing both sides of a call
+
+macOS hands a program the system's own audio through ScreenCaptureKit, so
+Alfredo records the room and the call and mixes them. Windows has no such
+thing: ffmpeg speaks DirectShow, and DirectShow only sees what is playing if a
+loopback device exists. Install any of the free ones and Alfredo finds it by
+itself, records it alongside the microphone, and mixes the two the same way:
+
+- [VB-Cable](https://vb-audio.com/Cable/), then set it as the playback device
+  for the call, or
+- `virtual-audio-capturer` from
+  [screen-capture-recorder](https://github.com/rdp/screen-capture-recorder-to-video-windows-free), or
+- "Stereo Mix", if your sound card still has it (Sound settings, Recording,
+  right click, Show Disabled Devices).
+
+Until one of those is there, Windows records your microphone alone, and
+Meetings says so on the page rather than letting you find out afterwards. On
+Linux, route the call into a PulseAudio monitor source and point
+`CRM_AUDIO_DEVICE` at it.
 
 Secrets live in the macOS keychain where there is one, and in a `0600` file
 beside the workspace registry where there is not.

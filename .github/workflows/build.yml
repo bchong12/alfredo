@@ -35,6 +35,9 @@ jobs:
           npm run build
           npm run build:server
 
+      - name: Which audio devices ffmpeg would pick
+        run: npx tsx scripts/devices.test.mjs
+
       - name: Does it actually run here
         run: node scripts/smoke.mjs
 
