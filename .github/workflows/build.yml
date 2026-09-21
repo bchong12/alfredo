@@ -54,9 +54,11 @@ jobs:
           # wav headers when the pipe closes. A runner has no audio device, so
           # 'mic-only' is the right answer here; a crash would not be.
           $out = "stop" | & .\alfredo-audio.exe record "$env:TEMP\alfredo-rec"
-          Write-Host "helper said: $out"
-          if ($LASTEXITCODE -ne 0) { throw "the helper exited $LASTEXITCODE" }
+          $code = $LASTEXITCODE
+          Write-Host "helper said: $out (exit $code)"
+          Get-ChildItem "$env:TEMP\alfredo-rec" | ForEach-Object { Write-Host "  wrote $($_.Name), $($_.Length) bytes" }
           if ($out -notmatch 'done') { throw "the helper did not finish cleanly" }
+          if ($code -ne 0) { throw "the helper exited $code" }
 
       - name: The system-audio helper compiles (macOS)
         if: runner.os == 'macOS'
