@@ -44,14 +44,20 @@ export const isRecording = () => current !== null
  */
 export async function hearing(): Promise<{ can: boolean; both: boolean; why: string }> {
   if (nativeAvailable()) return { can: true, both: true, why: 'the room and the call' }
+  if (!(await ffmpegAvailable()))
+    return {
+      can: false,
+      both: false,
+      why: WINDOWS
+        ? 'nothing yet. Install ffmpeg (winget install ffmpeg) to record the microphone, or build native/alfredo-audio-win to record the call as well'
+        : MAC
+          ? 'nothing yet. Install ffmpeg (brew install ffmpeg), or build native/alfredo-audio to record the call as well'
+          : 'nothing yet. Install ffmpeg (apt install ffmpeg) to record the microphone',
+    }
   await resolveMic().catch(() => {})
   if (WINDOWS) {
-    if (loopbackInput) return { can: true, both: true, why: 'the room and the call, through the loopback device on this PC' }
-    return {
-      can: true,
-      both: false,
-      why: 'your microphone only. Windows can hand over the call as well through WASAPI loopback: build native/alfredo-audio-win (one command, see the README) and Alfredo will use it',
-    }
+    if (loopbackInput) return { can: true, both: true, why: 'the room and the call, through the loopback device you have installed' }
+    return { can: true, both: false, why: 'your microphone only. Windows lets nothing read the speakers without a loopback device (VB-Cable, or Stereo Mix if your sound card has it); install one and Alfredo will pick it up' }
   }
   if (MAC) return { can: true, both: false, why: 'your microphone only. Build native/alfredo-audio to hear the call as well' }
   return { can: true, both: false, why: 'your microphone only. Linux has no loopback Alfredo can open on its own; route your call into a PulseAudio monitor source to include it' }
@@ -75,8 +81,20 @@ export function listDevices(): Promise<string> {
   })
 }
 
-/** Is there an ffmpeg to record with at all? */
-export const ffmpegAvailable = () => !WINDOWS ? existsSync(FFMPEG) || FFMPEG === 'ffmpeg' : true
+/**
+ * Is there anything on this machine to record with? The helper, or an ffmpeg
+ * it can fall back to. Checked by asking ffmpeg to say its version, because a
+ * bare name on PATH cannot be tested by looking for a file.
+ */
+let ffmpegThere: boolean | null = null
+export function ffmpegAvailable(): Promise<boolean> {
+  if (ffmpegThere !== null) return Promise.resolve(ffmpegThere)
+  return new Promise((res) => {
+    const p = spawn(FFMPEG, ['-hide_banner', '-version'])
+    p.on('error', () => res((ffmpegThere = false)))
+    p.on('close', (code) => res((ffmpegThere = code === 0)))
+  })
+}
 
 /**
  * Which avfoundation input is the microphone. Device indexes move as virtual
@@ -160,9 +178,7 @@ export function start(id: string, micOnly = false) {
   if (nativeAvailable()) {
     const dir = resolve(DIR, id)
     mkdirSync(dir, { recursive: true })
-    // The pipe on stdin is how the Windows helper is told to stop; the Mac one
-    // ignores it and takes a signal.
-    const proc = spawn(HELPER, micOnly ? ['record', dir, '--mic-only'] : ['record', dir], { stdio: ['pipe', 'pipe', 'pipe'] })
+    const proc = spawn(HELPER, micOnly ? ['record', dir, '--mic-only'] : ['record', dir], { stdio: ['ignore', 'pipe', 'pipe'] })
     const rec: Recording = { id, path, startedAt: Date.now(), proc, backend: 'native', systemAudio: null, dir }
     proc.stdout!.on('data', (d) => {
       const s = d.toString()
@@ -255,12 +271,7 @@ export function stop(): Promise<{ id: string; path: string; durationS: number; b
     }
     rec.proc.once('close', done)
     if (rec.backend === 'native') {
-      // Windows has no signal to send a child: the helper stops when this
-      // pipe closes, which is also how it knows to finish its wav headers.
-      if (WINDOWS && rec.backend === 'native') {
-        rec.proc.stdin?.write('stop\n')
-        rec.proc.stdin?.end()
-      } else rec.proc.kill('SIGINT')
+      rec.proc.kill('SIGINT')
     } else {
       // 'q' asks ffmpeg to finalise the container; a hard kill leaves the wav header unwritten.
       rec.proc.stdin?.write('q')

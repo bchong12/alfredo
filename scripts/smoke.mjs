@@ -78,10 +78,28 @@ try {
   const meeting = await json('/api/v2/meetings', { method: 'POST', headers: as, body: JSON.stringify({ title: 'By hand', notes: 'No recorder needed.' }) })
   check('a meeting can be written by hand', meeting.status === 200)
 
+  // The brain: the embedding model is a native runtime with a build per
+  // platform, so this is the part that proves it on the machine running it.
+  const read = await json('/api/v2/brain/read', { method: 'POST', headers: as, body: '{}' })
+  check('the workspace can be read in', read.status === 200)
+  let brain = null
+  for (let i = 0; i < 180; i++) {
+    brain = (await json('/api/v2/brain', { headers: as })).body
+    if (brain?.chunks > 0 || brain?.progress?.state === 'failed' || brain?.state === 'failed') break
+    await new Promise((r) => setTimeout(r, 1000))
+  }
+  check('the embedding model runs here', brain?.chunks > 0, brain?.error ?? brain?.progress?.error ?? `${brain?.chunks ?? 0} passages, model ${brain?.model}`)
+  const passages = await json('/api/v2/ask/passages', {
+    method: 'POST',
+    headers: as,
+    body: JSON.stringify({ question: 'what did the smoke test write down?' }),
+  })
+  check('a question finds its passage', passages.status === 200 && (passages.body?.length ?? passages.body?.passages?.length ?? 0) > 0)
+
   const engine = await json('/api/v2/transcribe/engine', { headers: as })
   const canRecord = engine.body?.canRecord
-  check('the recorder says what it can do here', typeof canRecord === 'boolean', `canRecord=${canRecord} on ${process.platform}`)
-  check('recording is offered only where it works', canRecord === (process.platform === 'darwin'))
+  check('the recorder says what it can do here', typeof canRecord === 'boolean', `canRecord=${canRecord}, hears "${engine.body?.hears?.why ?? ''}"`)
+  check('transcribing here is claimed only where it works', engine.body?.localTranscription === (process.platform === 'darwin'))
 
   const mcp = await fetch(`${BASE}/mcp`, {
     method: 'POST',

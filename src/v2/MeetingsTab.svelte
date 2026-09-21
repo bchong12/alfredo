@@ -26,7 +26,7 @@
   let loading = $state(!peek('/meetings'))
   type Install = { state: 'idle' | 'running' | 'done' | 'failed'; log: string }
   type Hears = { can: boolean; both: boolean; why: string }
-  let engine = $state<{ parakeet: boolean; recording: boolean; install: Install; canRecord?: boolean; hears?: Hears } | null>(null)
+  let engine = $state<{ parakeet: boolean; recording: boolean; install: Install; canRecord?: boolean; localTranscription?: boolean; hears?: Hears } | null>(null)
   let upcoming = $state<{ connected: boolean; events: Event[] } | null>(null)
   let job = $state<Job | null>(null)
   let title = $state('')
@@ -47,7 +47,7 @@
   }
   load()
   async function checkEngine() {
-    engine = await v2.get<{ parakeet: boolean; recording: boolean; install: Install; canRecord?: boolean; hears?: Hears }>('/transcribe/engine').catch(() => engine)
+    engine = await v2.get<{ parakeet: boolean; recording: boolean; install: Install; canRecord?: boolean; localTranscription?: boolean; hears?: Hears }>('/transcribe/engine').catch(() => engine)
     if (engine?.install.state === 'running') setTimeout(checkEngine, 3000)
   }
   checkEngine()
@@ -263,10 +263,20 @@
           <div class="model">
             <div class="mi"><Cpu size={17} /></div>
             <div class="mt">
-              <span class="h">Recording needs a Mac</span>
+              <span class="h">Nothing here to record with</span>
+              <span class="s">Alfredo records {engine.hears?.why ?? 'nothing yet'}. Meetings you write yourself work either way.</span>
+            </div>
+            <button class="primary sm" onclick={create}>New meeting</button>
+          </div>
+        {:else if engine && engine.localTranscription === false && !engine.parakeet}
+          <div class="model">
+            <div class="mi"><Cpu size={17} /></div>
+            <div class="mt">
+              <span class="h">Transcribing here needs a Mac, for now</span>
               <span class="s">
-                Alfredo records the room and the call through macOS, and transcribes with Parakeet on Apple silicon. Everything
-                else works here: make a meeting, write the notes, and they are searched with the rest of the workspace.
+                Recording works on this machine. Parakeet itself is an NVIDIA model that runs anywhere, but Alfredo runs it
+                through FluidAudio, which is Apple silicon only. Set OPENROUTER_API_KEY to transcribe elsewhere, or write the
+                meeting yourself.
               </span>
             </div>
             <button class="primary sm" onclick={create}>New meeting</button>

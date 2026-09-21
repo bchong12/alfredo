@@ -86,7 +86,7 @@ do. Two things are genuinely Apple's, and the app says so rather than pretending
 | Meetings you write yourself | Yes | Yes |
 | A packaged desktop app | Yes | Yes. Built by CI on each one |
 | **Recording a meeting** | The room and the call together, through a small ScreenCaptureKit helper | The microphone, always. The call as well on Windows if a loopback device is installed (see below) |
-| **Transcribing it here** | Yes, Parakeet on Apple silicon | Not yet. Set `OPENROUTER_API_KEY` to transcribe elsewhere, or write the meeting yourself |
+| **Transcribing it here** | Yes, Parakeet on Apple silicon | Not yet, and worth being exact about why: see below |
 
 #### Hearing both sides of a call
 
@@ -110,14 +110,32 @@ Meetings says on the page which of the two it is going to record, rather than
 letting you find out after an hour. On Linux, route the call into a PulseAudio
 monitor source and point `CRM_AUDIO_DEVICE` at it.
 
+#### Why transcription is still Mac-only, and what would change it
+
+Parakeet is NVIDIA's model, not Apple's, and it runs anywhere: there are ONNX
+builds of the same `parakeet-tdt-0.6b-v3` Alfredo uses, and
+[sherpa-onnx](https://k2-fsa.github.io/sherpa/onnx/pretrained_models/offline-transducer/nemo-transducer-models.html)
+runs them on Windows and Linux today.
+
+What is Apple-only is the path Alfredo takes to it:
+[FluidAudio](https://github.com/FluidInference/FluidAudio), a Swift CLI on
+CoreML. Alfredo already ships ONNX Runtime for embeddings, and it already has
+Linux and Windows builds, so the model and the runtime are both there; nothing
+has been wired between them yet. Until it is, Windows and Linux record the
+meeting and you either write it up yourself or set `OPENROUTER_API_KEY` to
+transcribe it elsewhere, and the app says which of those it is.
+
 Secrets live in the macOS keychain where there is one, and in a `0600` file
 beside the workspace registry where there is not.
 
 Checked on every push, on all three: `.github/workflows/build.yml` installs
 Alfredo on macOS, Windows and Linux, type-checks it, builds it, packages the
-desktop app, and then runs `scripts/smoke.mjs`, which starts the server, makes
-a workspace, writes a doc, a card and a meeting into the local database and
-reads them back, and asks the MCP server for its tools. Run it yourself with
+desktop app, compiles both system-audio helpers and runs the Windows one, and
+then runs `scripts/smoke.mjs`, which starts the server, makes a workspace,
+writes a doc, a card and a meeting into the local database and reads them back,
+reads the workspace into the brain and asks a question of it (which is the
+embedding model running on that machine), and asks the MCP server for its
+tools. Run it yourself with
 `npm run build:server && node scripts/smoke.mjs`.
 
 ## Everything goes through the database

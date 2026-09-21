@@ -28,6 +28,5 @@ export function workspaceFolder(): string {
 
 /** The recorder helper, under its current name or the one it was built with. */
 export function audioHelper(): string {
-  const exe = process.platform === 'win32' ? '.exe' : ''
-  return pick(join(appHome(), 'bin', `alfredo-audio${exe}`), join(appHome(), 'bin', `alfred-audio${exe}`))
+  return pick(join(appHome(), 'bin', 'alfredo-audio'), join(appHome(), 'bin', 'alfred-audio'))
 }
