@@ -21,6 +21,13 @@ const { chmodSync } = require('node:fs')
 let server = null
 let win = null
 
+/** Development has no app bundle to take an icon from, so the dock is told. */
+function ownIcon() {
+  if (process.platform !== 'darwin' || !app.dock) return
+  const png = join(__dirname, 'icon', 'icon.png')
+  if (DEV && existsSync(png)) app.dock.setIcon(png)
+}
+
 /** Login-shell PATH, so `claude`, `ffmpeg` and node are found inside sessions
  *  the same way they are in Terminal. Finder launches carry almost none. */
 function loginEnv() {
@@ -111,6 +118,9 @@ function createWindow() {
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 14, y: 14 },
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#0d0d0d' : '#ffffff',
+    // Windows and Linux take the icon from the window; macOS takes it from
+    // the bundle, and from the dock in development (see below).
+    ...(process.platform === 'darwin' ? {} : { icon: join(__dirname, 'icon', 'icon.png') }),
     webPreferences: { contextIsolation: true, sandbox: true },
   })
   win.loadURL(UI)
@@ -120,6 +130,7 @@ function createWindow() {
 }
 
 app.whenReady().then(async () => {
+  ownIcon()
   // Every launch is a fresh page: a new build must never load from cache.
   const { session } = require('electron')
   await session.defaultSession.clearCache().catch(() => {})
