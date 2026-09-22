@@ -1,8 +1,8 @@
 <script lang="ts">
   // Docs: a home page of everything written, and each doc opening full width.
+  import { canEditHere, afterMove } from './project.svelte'
   import ProjectChip from './ProjectChip.svelte'
-  import ProjectPicker from './ProjectPicker.svelte'
-  import { canEditHere } from './project.svelte'
+  import ItemMenu from './ItemMenu.svelte'
   import { scope } from './project.svelte'
   import Plus from '@lucide/svelte/icons/plus'
   import Search from '@lucide/svelte/icons/search'
@@ -73,7 +73,7 @@
     query.trim()
       ? 'Nothing matches that search.'
       : scope.enabled && scope.id
-        ? 'Nothing here yet. New docs land in this project; to move an existing one, switch to All projects and use its project chip.'
+        ? 'Nothing here yet. New docs land in this project; to move an existing one, open the project it is in (or Unfiled) and use its three dots.'
         : 'No docs yet. Start one with New doc.',
   )
 
@@ -121,6 +121,25 @@
     clearTimeout(timer)
     timer = setTimeout(save, 700)
   }
+  /** From a doc's three dots in the grid or the list. */
+  async function removeFromList(d: { id: string; title: string }) {
+    if (!confirm(`Delete “${d.title || 'Untitled'}”?`)) return
+    const before = docs
+    docs = docs.filter((x) => x.id !== d.id)
+    put('/docs', docs)
+    try {
+      await v2.del(`/docs/${d.id}`)
+    } catch (e) {
+      docs = before
+      put('/docs', before)
+      ui.error = (e as Error).message
+    }
+  }
+  const movedTo = (id: string, p: string | null) => {
+    docs = afterMove(docs, id, p)
+    put('/docs', docs)
+  }
+
   async function remove() {
     if (!doc || !confirm(`Delete “${doc.title || 'Untitled'}”?`)) return
     const id = doc.id
@@ -181,7 +200,6 @@
               if (e.key === 'Enter' || e.key === 'Tab') (e.preventDefault(), editor?.focus(true))
             }}
           />
-          <ProjectPicker kind="doc" id={doc.id} project={doc.project ?? null} onchange={(p) => (doc && (doc.project = p), (docs = docs.map((x) => (x.id === doc?.id ? { ...x, project: p } : x))))} />
           {#key doc.id}
             <DocEditor bind:this={editor} value={doc.body} onchange={(md) => queue({ body: md })} />
           {/key}
@@ -216,11 +234,14 @@
           <div class="grid">
             {#each shown as d (d.id)}
               <button class="tile" onclick={() => go(tabId, d.id)} onmouseenter={() => prefetch(`/docs/${d.id}`)}>
-                <FileText size={15} />
+                <span class="top">
+                  <FileText size={15} />
+                  {#if canEditHere()}<span class="more"><ItemMenu kind="doc" id={d.id} project={d.project ?? null} onopen={() => go(tabId, d.id)} onmoved={(p) => movedTo(d.id, p)} ondelete={() => removeFromList(d)} /></span>{/if}
+                </span>
                 <span class="t">{d.title}</span>
                 <span class="s">
                   {#if scope.enabled}
-                    <ProjectChip kind="doc" id={d.id} project={d.project ?? null} onmoved={(p) => (docs = docs.map((x) => (x.id === d.id ? { ...x, project: p } : x)))} />
+                    <ProjectChip passive kind="doc" id={d.id} project={d.project ?? null} />
                   {:else if d.folder}{d.folder} ·{/if}
                   Edited {ago(d.updatedAt)}
                 </span>
@@ -235,17 +256,18 @@
           </div>
         {:else}
           <div class="list">
-            <div class="lh"><span class="grow">All docs</span><span class="w120">{scope.enabled && !scope.id ? 'Project' : 'Folder'}</span><span class="w110 r">Edited</span></div>
+            <div class="lh"><span class="grow">All docs</span><span class="w120">{scope.enabled && !scope.id ? 'Project' : 'Folder'}</span><span class="w110 r">Edited</span>{#if canEditHere()}<span class="w24"></span>{/if}</div>
             {#each shown as d (d.id)}
               <button class="row" onclick={() => go(tabId, d.id)} onmouseenter={() => prefetch(`/docs/${d.id}`)}>
                 <FileText size={14} />
                 <span class="grow t">{d.title}</span>
                 <span class="w120 dim">
                   {#if scope.enabled}
-                    <ProjectChip kind="doc" id={d.id} project={d.project ?? null} onmoved={(p) => (docs = docs.map((x) => (x.id === d.id ? { ...x, project: p } : x)))} />
+                    <ProjectChip passive kind="doc" id={d.id} project={d.project ?? null} />
                   {:else}{d.folder ?? ''}{/if}
                 </span>
                 <span class="w110 r dim">{ago(d.updatedAt)}</span>
+                {#if canEditHere()}<span class="more"><ItemMenu kind="doc" id={d.id} project={d.project ?? null} onopen={() => go(tabId, d.id)} onmoved={(p) => movedTo(d.id, p)} ondelete={() => removeFromList(d)} /></span>{/if}
               </button>
             {:else}
               {#if loading}
@@ -347,6 +369,32 @@
     display: flex;
     flex-wrap: wrap;
     gap: 14px;
+  }
+  /* The dots are there when you reach for them, and stay while their menu is open. */
+  .top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    align-self: stretch;
+    height: 16px;
+  }
+  .more {
+    display: inline-flex;
+    opacity: 0;
+    transition: opacity 0.12s;
+  }
+  .tile:hover .more,
+  .row:hover .more,
+  .more:focus-within,
+  .more:has(:global(.open)) {
+    opacity: 1;
+  }
+  .tile .more {
+    margin: -4px -6px -4px 0;
+  }
+  .w24 {
+    width: 24px;
+    flex: none;
   }
   .tile {
     width: 232px;

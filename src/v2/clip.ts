@@ -19,6 +19,21 @@ const where = () => ({
   name: ui.settings?.name ?? workspace.list.find((w) => w.id === workspace.activeId)?.name ?? 'Workspace',
 })
 
+/**
+ * Just the address: what it is, and the calls that read and change it. For an
+ * assistant that has Alfredo connected this is all it needs, and better than
+ * the words, since it reads the thing as it is now rather than as it was when
+ * somebody copied it, and a long meeting is one line on the clipboard.
+ */
+export function linkForMcp(kind: Kind, id: string, title: string) {
+  const ws = where()
+  return [
+    `Alfredo · ${ws.name} · ${kind} “${title}”`,
+    `Read it:    ws_read kind:"${kind}" id:"${id}"   (MCP header x-workspace: ${ws.id})`,
+    ...(kind === 'card' || kind === 'doc' ? [`Change it:  ws_write kind:"${kind}" id:"${id}"`] : []),
+  ].join('\n')
+}
+
 /** One thing, with the call that reads it and the call that changes it. */
 export function forClaude(kind: Kind, id: string, title: string, body: string) {
   const ws = where()

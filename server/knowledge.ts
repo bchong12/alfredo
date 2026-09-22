@@ -14,6 +14,9 @@
 import { chunkCanvas, chunkCard, chunkText } from './chunk'
 import { embed, embedQuery, embedderState, readyEmbedder } from './embed'
 import { hasLocalChat, chat, EXTRACT_MODEL } from './ai'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { appHome } from './home'
 import type { Hit, ItemKind, Store } from './v2'
 
 export type Citation = { kind: ItemKind; itemId: string; title: string; heading?: string }
@@ -36,7 +39,9 @@ async function readItem(store: Store, kind: ItemKind, id: string) {
     const c = await store.canvas(id)
     return { title: c.title, chunks: chunkCanvas(c.title, c.nodes) }
   }
-  const card = (await store.cardsIn('backlog')).find((c) => c.id === id) ?? (await store.cardsIn([]))[0]
+  /* The card asked for, wherever it is: taking the first card of the board for
+     any card not in the backlog filed every week's cards under one card's words. */
+  const card = (await store.cardsIn('backlog')).find((c) => c.id === id) ?? (await store.cardsIn([])).find((c) => c.id === id)
   if (!card) return null
   return { title: `${card.ref} ${card.title}`, chunks: chunkCard(card.ref, card.title, card.body) }
 }
@@ -100,18 +105,55 @@ export async function indexItem(store: Store, kind: ItemKind, id: string) {
   return item.chunks.length
 }
 
-export type Progress = { state: 'idle' | 'running' | 'done' | 'failed'; done: number; total: number; chunks: number; error?: string; at: number }
+export type Progress = { state: 'idle' | 'running' | 'done' | 'failed'; done: number; total: number; chunks: number; failed: number; error?: string; at: number }
 const runs = new Map<string, Progress>()
-export const indexProgress = (workspace: string): Progress => runs.get(workspace) ?? { state: 'idle', done: 0, total: 0, chunks: 0, at: 0 }
+export const indexProgress = (workspace: string): Progress => runs.get(workspace) ?? { state: 'idle', done: 0, total: 0, chunks: 0, failed: 0, at: 0 }
+
+// What has been read in, and as of when: one line a piece of work, kept on this
+// Mac. It is what lets the workspace keep itself read in, since "what changed
+// since last time" needs a last time. A teammate's edit, or an agent's, made
+// anywhere but this window, shows up here as a newer date than the one kept.
+const seenFile = (workspace: string) => join(appHome(), 'brain', `${workspace.replace(/[^a-z0-9_-]/gi, '_')}.seen.json`)
+function seenBefore(workspace: string): Record<string, string> {
+  try {
+    return existsSync(seenFile(workspace)) ? (JSON.parse(readFileSync(seenFile(workspace), 'utf8')) as Record<string, string>) : {}
+  } catch {
+    return {}
+  }
+}
+function remember(workspace: string, seen: Record<string, string>) {
+  try {
+    mkdirSync(dirname(seenFile(workspace)), { recursive: true })
+    writeFileSync(seenFile(workspace), JSON.stringify(seen))
+  } catch {}
+}
 
 /** Everything the workspace has, from the beginning. Safe to run again. */
-export function reindex(store: Store, workspace: string) {
+export const reindex = (store: Store, workspace: string) => read(store, workspace, true)
+
+/**
+ * Only what is new or has changed since it was last read, and nothing at all
+ * when nothing has: cheap enough to run whenever a workspace is opened, which
+ * is what makes the button on the Models page something nobody has to press.
+ */
+export const catchUp = (store: Store, workspace: string) => read(store, workspace, false)
+
+const lookedAt = new Map<string, number>()
+/** Called as a workspace is used. Looks again at most every few minutes, a
+ *  little after the request that woke it, so it never makes a page wait. */
+export function keepReadIn(store: Store, workspace: string, everyMs = 5 * 60_000) {
+  if (!workspace || Date.now() - (lookedAt.get(workspace) ?? 0) < everyMs) return
+  lookedAt.set(workspace, Date.now())
+  setTimeout(() => catchUp(store, workspace), 6000)
+}
+
+function read(store: Store, workspace: string, everything: boolean) {
   const have = runs.get(workspace)
   if (have?.state === 'running') return have
-  const p: Progress = { state: 'running', done: 0, total: 0, chunks: 0, at: Date.now() }
-  runs.set(workspace, p)
+  const p: Progress = { state: 'running', done: 0, total: 0, chunks: 0, failed: 0, at: Date.now() }
+  /* A look that finds nothing to do should not wipe what the last real run said. */
+  if (everything || !have) runs.set(workspace, p)
   ;(async () => {
-    await readyEmbedder()
     const [docs, canvases, meetings, cards, backlog] = await Promise.all([
       store.docs(),
       store.canvases(),
@@ -119,22 +161,51 @@ export function reindex(store: Store, workspace: string) {
       store.cardsIn([]).catch(() => []),
       store.cardsIn('backlog').catch(() => []),
     ])
-    const work: [ItemKind, string][] = [
-      ...docs.map((d) => ['doc', d.id] as [ItemKind, string]),
-      ...canvases.map((c) => ['canvas', c.id] as [ItemKind, string]),
-      ...meetings.map((m) => ['meeting', m.id] as [ItemKind, string]),
-      ...[...cards, ...backlog].map((c) => ['card', c.id] as [ItemKind, string]),
+    const all: { kind: ItemKind; id: string; stamp: string }[] = [
+      ...docs.map((d) => ({ kind: 'doc' as ItemKind, id: d.id, stamp: d.updatedAt })),
+      ...canvases.map((c) => ({ kind: 'canvas' as ItemKind, id: c.id, stamp: c.updatedAt })),
+      /* A meeting has no "changed at": what it is called and whether it has
+         been written up is what changes from outside this window. */
+      ...meetings.map((m) => ({ kind: 'meeting' as ItemKind, id: m.id, stamp: `${m.title}|${m.status}|${m.hasTranscript}|${m.durationS ?? ''}` })),
+      ...[...cards, ...backlog].map((c) => ({ kind: 'card' as ItemKind, id: c.id, stamp: c.updatedAt })),
     ]
+    /* Nothing kept is nothing read, whatever the list of dates says. */
+    const seen = !everything && (await store.chunkCount().catch(() => 0)) > 0 ? seenBefore(workspace) : {}
+    const work = all.filter((item) => everything || seen[`${item.kind}:${item.id}`] !== item.stamp)
+    const present = new Set(all.map((item) => `${item.kind}:${item.id}`))
+    const gone = Object.keys(seen).filter((key) => !present.has(key))
+    if (!work.length && !gone.length) {
+      if (runs.get(workspace) === p) p.state = 'done'
+      return
+    }
+    runs.set(workspace, p)
+    await readyEmbedder()
     p.total = work.length
-    for (const [kind, id] of work) {
+    for (const key of gone) {
+      const [kind, ...rest] = key.split(':')
+      await store.dropChunks(kind as ItemKind, rest.join(':')).catch(() => {})
+      delete seen[key]
+    }
+    for (const { kind, id, stamp } of work) {
       try {
         p.chunks += await indexItem(store, kind, id)
-      } catch {
-        // Skip what cannot be read; the count says how much made it.
+        seen[`${kind}:${id}`] = stamp
+      } catch (e) {
+        /* One unreadable item is nothing; every item failing is one thing
+           wrong, said once, and worth saying. Whatever stopped the first is
+           what stopped them all, so that is the reason kept. */
+        p.failed++
+        p.error ??= (e as Error).message
       }
       p.done++
+      if (p.done % 20 === 0) remember(workspace, seen)
     }
-    p.state = 'done'
+    remember(workspace, seen)
+    /* Nothing stored and something refused is a failure, however calmly each
+       item went by: a workspace that reads itself in and stays empty has to
+       say why. */
+    p.state = p.failed && !p.chunks && p.failed === p.total ? 'failed' : 'done'
+    if (p.state === 'done') p.error = undefined
   })().catch((e) => {
     p.state = 'failed'
     p.error = (e as Error).message

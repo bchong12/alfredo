@@ -146,6 +146,22 @@ export function refresh(path: string) {
   load(path).catch(() => {})
 }
 
+/** The same, in every project's view of this workspace: what moves between
+ *  projects leaves one list and joins another, and both are out of date. */
+export function dropEverywhere(path: string) {
+  const mine = `${workspace.activeId}|`
+  const stale = (s: string) => s.startsWith(mine) && (s.split('|')[2] ?? '').startsWith(path)
+  for (const s of [...store.keys()]) if (stale(s)) store.delete(s)
+  for (const s of Object.keys(index)) {
+    if (!stale(s)) continue
+    delete index[s]
+    try {
+      localStorage.removeItem(DISK + s)
+    } catch {}
+  }
+  saveIndex()
+}
+
 export function drop(prefix: string) {
   const k = key(prefix)
   for (const s of [...store.keys()]) if (s.startsWith(k)) store.delete(s)

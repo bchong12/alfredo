@@ -12,7 +12,15 @@
     id,
     project = null,
     onmoved,
-  }: { kind: 'card' | 'doc' | 'canvas' | 'meeting'; id: string; project?: string | null; onmoved?: (p: string | null) => void } = $props()
+    passive = false,
+  }: {
+    kind: 'card' | 'doc' | 'canvas' | 'meeting'
+    id: string
+    project?: string | null
+    onmoved?: (p: string | null) => void
+    /** Says which project and nothing more: the row's own menu does the moving. */
+    passive?: boolean
+  } = $props()
 
   let open = $state(false)
   let busy = $state(false)
@@ -38,7 +46,10 @@
   }
 </script>
 
-{#if scope.enabled}
+{#if scope.enabled && passive}
+  {#if current && !compact}<span class="chip still"><i class="d {current.color}"></i><span class="t">{current.name}</span></span>
+  {:else if current}<i class="d {current.color}" title={current.name}></i>{/if}
+{:else if scope.enabled}
   <span class="chip-wrap">
     <button
       class="chip"
@@ -88,9 +99,13 @@
     font-size: var(--fs-1);
     color: var(--muted);
   }
-  .chip:hover {
+  .chip:not(.still):hover {
     border-color: var(--line-strong);
     color: var(--ink);
+  }
+  .chip.still {
+    padding-left: 0;
+    cursor: inherit;
   }
   .chip.empty .t {
     opacity: 0.65;

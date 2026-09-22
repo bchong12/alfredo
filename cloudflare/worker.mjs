@@ -135,13 +135,15 @@ async function api(req, env) {
     const hash = await sha(String(b.invite ?? ''))
     const inv = await env.DB.prepare('SELECT * FROM ws_invites WHERE token_hash = ?').bind(hash).first()
     if (!inv || inv.used_at || inv.expires_at < Date.now()) fail('This invitation is no longer good. Ask for a new one.', 403)
+    // The invitation is what lets somebody in. A password is for signing in
+    // somewhere the session is not (another Mac, a browser): welcome, not required.
     const password = String(b.password ?? '')
-    if (password.length < 8) fail('Use a password of at least 8 characters.')
+    if (password && password.length < 8) fail('Use a password of at least 8 characters.')
     const email = inv.email.toLowerCase()
     const name = text(b.name, 100) || email.split('@')[0]
     const have = await env.DB.prepare('SELECT * FROM ws_users WHERE lower(email) = lower(?)').bind(email).first()
     const id = have?.id ?? crypto.randomUUID()
-    const hashed = await passwordHash(password)
+    const hashed = password ? await passwordHash(password) : (have?.password_hash ?? null)
     if (have) await env.DB.prepare('UPDATE ws_users SET name = ?, role = ?, password_hash = ? WHERE id = ?').bind(name, inv.role, hashed, id).run()
     else await env.DB.prepare('INSERT INTO ws_users(id,email,name,role,password_hash,created_at) VALUES(?,?,?,?,?,?)').bind(id, email, name, inv.role, hashed, now()).run()
     for (const p of JSON.parse(inv.projects || '[]')) {

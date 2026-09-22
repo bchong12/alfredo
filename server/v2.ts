@@ -12,18 +12,19 @@ import { currentWeek, listWeeks, localToday, endsOn as weekEnds, type Week as We
 import { formatRef, prefixFor } from '../src/lib/ref'
 import { CloudflareWorkspace, CloudflareError } from './cloudflare-workspace'
 import { markdownToTiptap, tiptapToMarkdown } from './tiptap'
-import { supabaseFor, type Workspace } from './workspaces'
+import { accountsFor, supabaseFor, type Workspace } from './workspaces'
 import { inviteLink } from './invite-link'
 import { unlink } from 'node:fs/promises'
 import { randomUUID, randomBytes, createHash } from 'node:crypto'
 import { toVector, embedderState, readyEmbedder } from './embed'
-import { ask, findPassages, forget, indexProgress, reindex, touch } from './knowledge'
+import { shelfFor, type Shelf } from './chunk-shelf'
+import { ask, findPassages, forget, indexProgress, keepReadIn, reindex, touch } from './knowledge'
 import * as audio from './audio'
 import { transcribe } from './ai-local'
 import { summarize, hasLocalChat, teamContext, type Summary } from './ai'
 import { parakeetAvailable } from './parakeet'
 import { download as onnxDownload, downloadState as onnxState, downloaded as onnxReady } from './parakeet-onnx'
-import { runComposio } from './composio'
+import { runComposio, whoIs } from './composio'
 import { spawn } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -309,6 +310,19 @@ async function q<T = any>(p: PromiseLike<{ data: any; error: { message: string }
   const { data, error } = await p
   if (error) throw new Error(error.message)
   return data as T
+}
+
+/* A store lives for one request, so what was learnt about a database has to
+   outlive it: which workspaces keep their passages on this Mac, and which of a
+   Worker's routes are not there. Forgotten after a while, so a table that gets
+   created or a Worker that gets redeployed is noticed without a restart. */
+const LEARNT_MS = 10 * 60_000
+const learnt = new Map<string, number>()
+const isLearnt = (key: string) => {
+  const at = learnt.get(key)
+  if (at && Date.now() - at < LEARNT_MS) return true
+  if (at) learnt.delete(key)
+  return false
 }
 
 class SqlStore implements Store {
@@ -600,35 +614,71 @@ class SqlStore implements Store {
     return rows.map((r) => ({ key: r.key, updatedAt: r.updated_at, bytes: JSON.stringify(r.value).length })).sort((a, b) => a.key.localeCompare(b.key))
   }
 
+  /**
+   * Passages belong in the database, beside the work. A database set up before
+   * there were questions has no table for them ("Could not find the table
+   * 'public.chunks'"), and running a migration on a team's database is not
+   * something to do behind anyone's back: there they are kept on this Mac
+   * until the table exists. See chunk-shelf.ts.
+   */
+  chunksOnThisMac = false
+  private async shelved<T>(inDatabase: () => Promise<T>, onThisMac: (shelf: Shelf) => T): Promise<T> {
+    const key = `shelf:${this.ws.id}`
+    if (!isLearnt(key)) {
+      try {
+        return await inDatabase()
+      } catch (e) {
+        if (!/schema cache|does not exist|PGRST20[25]|42P01|42883/i.test((e as Error).message)) throw e
+        learnt.set(key, Date.now())
+      }
+    }
+    this.chunksOnThisMac = true
+    return onThisMac(shelfFor(this.ws.id))
+  }
   async putChunks(kind: ItemKind, itemId: string, rows: ChunkRow[]) {
-    await q(db.from('chunks').delete().eq('kind', kind).eq('item_id', itemId))
-    if (!rows.length) return
-    await q(
-      db.from('chunks').insert(
-        rows.map((r) => ({
-          kind,
-          item_id: itemId,
-          ord: r.ord,
-          title: r.title,
-          heading: r.heading,
-          text: r.text,
-          // PostgREST takes the vector as its own literal.
-          embedding: toVector(r.embedding),
-          updated_at: new Date().toISOString(),
-        })),
-      ),
+    await this.shelved(
+      async () => {
+        await q(db.from('chunks').delete().eq('kind', kind).eq('item_id', itemId))
+        if (!rows.length) return
+        await q(
+          db.from('chunks').insert(
+            rows.map((r) => ({
+              kind,
+              item_id: itemId,
+              ord: r.ord,
+              title: r.title,
+              heading: r.heading,
+              text: r.text,
+              // PostgREST takes the vector as its own literal.
+              embedding: toVector(r.embedding),
+              updated_at: new Date().toISOString(),
+            })),
+          ),
+        )
+      },
+      (shelf) => shelf.put(kind, itemId, rows),
     )
   }
   async dropChunks(kind: ItemKind, itemId: string) {
-    await q(db.from('chunks').delete().eq('kind', kind).eq('item_id', itemId))
+    await this.shelved(
+      async () => void (await q(db.from('chunks').delete().eq('kind', kind).eq('item_id', itemId))),
+      (shelf) => shelf.drop(kind, itemId),
+    )
   }
   async searchChunks({ vector, text, limit }: { vector: number[]; text: string; limit: number }): Promise<Hit[]> {
-    const rows = await q<any[]>(db.rpc('alfredo_search', { q_embedding: toVector(vector), q_text: text, k: limit }))
-    return (rows ?? []).map((r) => ({ kind: r.kind, itemId: r.item_id, ord: r.ord, title: r.title, heading: r.heading, text: r.text, score: Number(r.score) }))
+    return this.shelved(
+      async () => {
+        const rows = await q<any[]>(db.rpc('alfredo_search', { q_embedding: toVector(vector), q_text: text, k: limit }))
+        return (rows ?? []).map((r) => ({ kind: r.kind, itemId: r.item_id, ord: r.ord, title: r.title, heading: r.heading, text: r.text, score: Number(r.score) }) as Hit)
+      },
+      (shelf) => shelf.search({ vector, text, limit }),
+    )
   }
   async chunkCount() {
-    const rows = await q<any[]>(db.from('chunks').select('id'))
-    return rows.length
+    return this.shelved(
+      async () => (await q<any[]>(db.from('chunks').select('id'))).length,
+      (shelf) => shelf.count(),
+    )
   }
 
   async projects(): Promise<Project[]> {
@@ -1016,37 +1066,58 @@ class CloudflareStore implements Store {
    * calls come back 404 and the settings document stands in, with this Mac
    * doing the deciding.
    */
-  private worker = true
+  /**
+   * A 404 is remembered against the ROUTE, not against the Worker. Workers in
+   * the wild are of every age: one has projects but not questions, the next
+   * the other way round. Taking the first 404 to mean the whole Worker is old
+   * switched off everything else it could do, which is how a workspace ends up
+   * reading itself in over and over and staying empty.
+   */
   private async tryWorker<T>(path: string, init?: { method?: string; body?: unknown }): Promise<T | null> {
-    if (!this.worker) return null
+    /* An id in the path is not part of the route. */
+    const route = `gone:${this.ws.id}:${init?.method ?? 'GET'} ${path.replace(/\/[^/]{8,}$/, '/:id')}`
+    if (isLearnt(route)) return null
     try {
       return await this.api.call<T>(path, init)
     } catch (e) {
       if (e instanceof CloudflareError && e.status === 404) {
-        this.worker = false
+        learnt.set(route, Date.now())
         return null
       }
       throw e
     }
   }
 
+  /**
+   * Passages live in the database when it has somewhere for them. A Worker
+   * older than questions are has not, and is not always ours to redeploy (a
+   * team's own, serving everybody else as it stands): there they are kept on
+   * this Mac instead, which is where they were made and the only place they
+   * are asked about. See chunk-shelf.ts.
+   */
+  chunksOnThisMac = false
+  private shelf() {
+    this.chunksOnThisMac = true
+    return shelfFor(this.ws.id)
+  }
   async putChunks(kind: ItemKind, itemId: string, rows: ChunkRow[]) {
     const live = await this.tryWorker('/chunks', {
       method: 'PUT',
       body: { kind, itemId, chunks: rows.map((r) => ({ ...r, embedding: Array.from(r.embedding) })) },
     })
-    if (!live) throw new Error('This Worker is older than questions are. Redeploy it from Settings > Database.')
+    if (!live) this.shelf().put(kind, itemId, rows)
   }
   async dropChunks(kind: ItemKind, itemId: string) {
-    await this.tryWorker('/chunks', { method: 'DELETE', body: { kind, itemId } })
+    const live = await this.tryWorker('/chunks', { method: 'DELETE', body: { kind, itemId } })
+    if (!live) this.shelf().drop(kind, itemId)
   }
   async searchChunks(q: { vector: number[]; text: string; limit: number }): Promise<Hit[]> {
     const live = await this.tryWorker<Hit[]>('/chunks/search', { method: 'POST', body: { vector: Array.from(q.vector), text: q.text, limit: q.limit } })
-    return live ?? []
+    return live ?? this.shelf().search(q)
   }
   async chunkCount() {
     const live = await this.tryWorker<{ count: number }>('/chunks/count')
-    return live?.count ?? 0
+    return live ? live.count : this.shelf().count()
   }
 
   /** The Worker knows its own people, so it says who this is. */
@@ -1056,9 +1127,39 @@ class CloudflareStore implements Store {
     return { id: s.user.id, admin: s.user.role === 'admin' || s.user.role === 'owner' }
   }
   async projects(): Promise<Project[]> {
-    const live = await this.tryWorker<{ projects: Project[] }>('/projects')
+    let live = await this.tryWorker<{ projects: Project[]; canManage?: boolean }>('/projects')
+    if (live && !live.projects.length && live.canManage && (await this.carryProjectsOver())) {
+      live = (await this.tryWorker<{ projects: Project[] }>('/projects')) ?? live
+    }
     if (live) return live.projects.map((p) => ({ ...p, members: p.members ?? [] }))
     return ((await this.raw()).projects ?? []).map((p: any) => ({ ...p, members: p.members ?? [] }))
+  }
+  /**
+   * A Worker that has just learnt about projects starts with none, while this
+   * workspace may have been keeping its own in its settings all along (that is
+   * what an older Worker made it do). Left there they would simply vanish from
+   * the app the day the Worker is brought up to date. So the first time an
+   * admin's app finds the Worker's list empty and the settings' list not, the
+   * projects, who is in them and what is in them are handed over, once: the
+   * note left behind stops projects that are later deleted from coming back.
+   */
+  private async carryProjectsOver(): Promise<boolean> {
+    const cur = await this.raw()
+    const mine: Project[] = cur.projects ?? []
+    if (!mine.length || cur.projectsCarriedAt) return false
+    await this.api.call('/projects', { method: 'PUT', body: { projects: mine } })
+    const byPlace = new Map<string, string[]>()
+    for (const [key, project] of Object.entries((cur.projectItems ?? {}) as Record<string, string>)) {
+      const [kind, ...id] = key.split(':')
+      const at = `${kind}|${project}`
+      byPlace.set(at, [...(byPlace.get(at) ?? []), id.join(':')])
+    }
+    for (const [at, ids] of byPlace) {
+      const [kind, project] = at.split('|')
+      await this.api.call('/projects/assign', { method: 'POST', body: { kind, ids, project } }).catch(() => {})
+    }
+    await this.writeRaw({ ...cur, projectsCarriedAt: new Date().toISOString() })
+    return true
   }
   async saveProjects(list: Project[]) {
     const live = await this.tryWorker('/projects', { method: 'PUT', body: { projects: list } })
@@ -1081,12 +1182,41 @@ class CloudflareStore implements Store {
     return ((await this.raw()).invites ?? []).map((i: any) => ({ ...i, projects: i.projects ?? [] }))
   }
   async createInvite(i: { email: string; role: 'admin' | 'member'; projects: { id: string; role: ProjectRole }[] }) {
-    const live = await this.tryWorker<{ token: string; invite: any }>('/invites', { method: 'POST', body: i })
-    if (live)
-      return {
-        token: live.token,
-        invite: { ...live.invite, projects: live.invite.projects ?? [], createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 14 * 86400000).toISOString() } as Invite,
+    /* Two kinds of Worker answer to POST /invites, and they mean different
+       things by it. Alfredo's own keeps invitations (it can list them) and
+       hands back one of its own. An older one, a team's own, only knows "let
+       this address in as an editor": asked for an invitation it let the
+       address in there and then, dropped the projects chosen for them, and
+       answered in a shape that crashed the page. Whether it can LIST
+       invitations is what tells them apart, and asking that changes nothing.
+       For the older kind the invitation is Alfredo's, kept in the workspace's
+       settings with its projects, and the Worker is told about the person when
+       they accept (see acceptInvite). */
+    const keepsInvites = await this.tryWorker<unknown[]>('/invites')
+    const live = keepsInvites ? await this.tryWorker<Record<string, any>>('/invites', { method: 'POST', body: i }) : null
+    if (live) {
+      /* Workers of different ages answer this differently: the invite under
+         `invite` with the token beside it, or the invite's own fields with the
+         token among them. Taking the first shape for granted is what made an
+         invitation die with "Cannot read properties of undefined". */
+      const made: Record<string, any> = live.invite && typeof live.invite === 'object' ? live.invite : live
+      const token: unknown = live.token ?? made.token
+      if (typeof token !== 'string' || !token) {
+        throw new Error(`This workspace's Worker accepted the invitation but handed back no link for it (it answered with: ${Object.keys(live).join(', ') || 'nothing'}). It may be older than invite links are.`)
       }
+      return {
+        token,
+        invite: {
+          id: String(made.id ?? ''),
+          email: made.email ?? i.email,
+          role: made.role === 'admin' ? 'admin' : i.role,
+          projects: Array.isArray(made.projects) ? made.projects : i.projects,
+          createdAt: made.created_at ?? new Date().toISOString(),
+          expiresAt: new Date(made.expires_at ?? Date.now() + 14 * 86400000).toISOString(),
+          usedAt: made.used_at ?? null,
+        } as Invite,
+      }
+    }
     const token = inviteToken()
     const invite: Invite = {
       id: randomUUID(),
@@ -1102,7 +1232,7 @@ class CloudflareStore implements Store {
     return { invite, token }
   }
   async revokeInvite(id: string) {
-    const live = await this.tryWorker(`/invites/${id}`, { method: 'DELETE' })
+    const live = (await this.tryWorker<unknown[]>('/invites')) ? await this.tryWorker(`/invites/${id}`, { method: 'DELETE' }) : null
     if (live) return
     const cur = await this.raw()
     await this.writeRaw({ ...cur, invites: (cur.invites ?? []).filter((i: any) => i.id !== id) })
@@ -1163,7 +1293,7 @@ export function storeFor(c: { workspace: Workspace; db: unknown } | undefined): 
 
 // --- transcription: transcript only, the audio never outlives it -------------
 
-type Job = { id: string; title: string; project?: string | null; state: 'recording' | 'transcribing' | 'writing' | 'done' | 'failed'; meetingId?: string; error?: string; startedAt: number }
+type Job = { id: string; title: string; project?: string | null; workspace?: string; state: 'recording' | 'transcribing' | 'writing' | 'done' | 'failed'; meetingId?: string; error?: string; startedAt: number; endedAt?: number }
 const jobs = new Map<string, Job>()
 let install: { state: 'idle' | 'running' | 'done' | 'failed'; log: string; startedAt?: number } = { state: 'idle', log: '' }
 
@@ -1201,7 +1331,7 @@ async function finish(job: Job, st: Store, path: string, durationS: number, star
         notes = `_The write-up could not be generated: ${(e as Error).message}_`
       }
     }
-    const m = await st.createMeeting({ title: title || 'Meeting', transcript: t.text, notes, startedAt: new Date(startedAt).toISOString(), durationS: Math.round(durationS) })
+    const m = await st.createMeeting({ title: title || 'Meeting', transcript: t.timed || t.text, notes, startedAt: new Date(startedAt).toISOString(), durationS: Math.round(durationS) })
     if (job.project) await st.assign('meeting', [m.id], job.project).catch(() => {})
     // Into the brain, the same as a meeting saved by hand: a transcript nobody
     // can find afterwards is half a meeting.
@@ -1212,8 +1342,81 @@ async function finish(job: Job, st: Store, path: string, durationS: number, star
     job.state = 'failed'
     job.error = (e as Error).message
   } finally {
+    job.endedAt = Date.now()
     // The audio exists only long enough to be transcribed.
     await unlink(path).catch(() => {})
+  }
+}
+
+// --- the calendar: every account a workspace uses, as one list ----------------
+
+type CalendarAnswer = { connected: boolean; accounts?: number; calendars: string[]; events: unknown[]; error: string | null }
+const calendars = new Map<string, { at: number; answer: CalendarAnswer }>()
+const looking = new Map<string, Promise<void>>()
+
+async function lookAtCalendars(aliases: string[]): Promise<CalendarAnswer> {
+  const ask = async (alias: string | null) => {
+    const args = [
+      'execute',
+      'GOOGLECALENDAR_EVENTS_LIST',
+      '-d',
+      JSON.stringify({ calendarId: 'primary', timeMin: new Date().toISOString(), maxResults: 6, singleEvents: true, orderBy: 'startTime' }),
+      ...(alias ? ['--account', alias] : []),
+    ]
+    const { out } = await runComposio(args, 30_000)
+    const start = out.indexOf('{')
+    let r: any = null
+    try {
+      r = start >= 0 ? JSON.parse(out.slice(start, out.lastIndexOf('}') + 1)) : null
+    } catch {}
+    if (!r?.successful) {
+      const missing = /No active connection|link googlecalendar/i.test(r?.error ?? out)
+      return { ok: false as const, missing, error: missing ? null : ((r?.error as string | undefined) ?? 'Calendar unavailable') }
+    }
+    const items: any[] = r.data?.items ?? r.data?.response_data?.items ?? []
+    /* Whose calendar it is: the account's own address. Not the organiser's,
+       which says who called the meeting and nothing about where it was found. */
+    const calendar = alias ? (whoIs('googlecalendar', alias) ?? alias.replace(/^[a-z0-9]+_/, '')) : undefined
+    return {
+      ok: true as const,
+      calendar,
+      events: items.map((e: any) => ({
+        id: e.id,
+        title: e.summary ?? '(no title)',
+        start: e.start?.dateTime ?? e.start?.date,
+        end: e.end?.dateTime ?? e.end?.date,
+        link: e.hangoutLink ?? e.location ?? null,
+        people: (e.attendees ?? []).length,
+        account: alias ?? undefined,
+        calendar,
+      })),
+    }
+  }
+  const answers = await Promise.all((aliases.length ? aliases : [null]).map((alias) => ask(alias)))
+  const good = answers.filter((a) => a.ok)
+  if (!good.length) {
+    const first = answers[0]
+    return { connected: !(!first.ok && first.missing), calendars: [], events: [], error: !first.ok ? first.error : null }
+  }
+  /* The same meeting sits on both calendars when one invited the other. */
+  const seen = new Set<string>()
+  const events = good
+    .flatMap((a) => (a.ok ? a.events : []))
+    .sort((x, y) => String(x.start).localeCompare(String(y.start)))
+    .filter((e) => {
+      const key = `${e.title}|${e.start}`
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+    .slice(0, 8)
+  const failed = answers.find((a) => !a.ok && !a.missing)
+  return {
+    connected: true,
+    accounts: aliases.length,
+    calendars: good.flatMap((a) => (a.ok && a.calendar ? [a.calendar] : [])),
+    events,
+    error: failed && !failed.ok ? failed.error : null,
   }
 }
 
@@ -1227,6 +1430,16 @@ export function v2Routes(current: () => { workspace: Workspace; db: unknown } | 
   app.onError((e, c) => {
     const status = (e as any).status ?? (e instanceof Conflict ? 409 : 500)
     return c.json({ error: e.message }, status)
+  })
+
+  /* The workspace keeps itself read in: using it is what wakes the look for
+     anything new, a few seconds later and at most every few minutes. */
+  app.use('*', async (c, next) => {
+    await next()
+    try {
+      const cur = current()
+      if (cur && c.req.method === 'GET') keepReadIn(storeFor(cur), cur.workspace.id)
+    } catch {}
   })
 
   app.get('/settings', async (c) => c.json(await store().settings()))
@@ -1436,7 +1649,8 @@ export function v2Routes(current: () => { workspace: Workspace; db: unknown } | 
   app.get('/brain', async (c) => {
     const st = store()
     const chunks = await st.chunkCount().catch(() => 0)
-    return c.json({ ...embedderState(), chunks, progress: indexProgress(current()?.workspace.id ?? '') })
+    /* Said on the Models page, so nobody wonders why a teammate's Mac knows nothing yet. */
+    return c.json({ ...embedderState(), chunks, onThisMac: (st as { chunksOnThisMac?: boolean }).chunksOnThisMac === true, progress: indexProgress(current()?.workspace.id ?? '') })
   })
   app.post('/brain/read', async (c) => {
     const { me } = await mine(c)
@@ -1789,7 +2003,7 @@ export function v2Routes(current: () => { workspace: Workspace; db: unknown } | 
     const b = await c.req.json<{ title?: string; micOnly?: boolean }>().catch(() => ({}) as { title?: string; micOnly?: boolean })
     const id = randomUUID()
     const r = audio.start(id, !!b.micOnly)
-    jobs.set(id, { id, title: b.title?.trim() || 'Meeting', project: projectOf(c), state: 'recording', startedAt: r.startedAt })
+    jobs.set(id, { id, title: b.title?.trim() || 'Meeting', project: projectOf(c), workspace: current()?.workspace.id, state: 'recording', startedAt: r.startedAt })
     return c.json({ id, startedAt: r.startedAt })
   })
   app.post('/transcribe/stop', async (c) => {
@@ -1802,45 +2016,51 @@ export function v2Routes(current: () => { workspace: Workspace; db: unknown } | 
     finish(job, st, r.path, r.durationS, job.startedAt, current()?.workspace.id ?? '')
     return c.json({ id: r.id, systemAudio: r.systemAudio })
   })
+  /* What is being recorded or written up right now, for the app's frame to
+     draw wherever you are. A finished one stays a minute so a window that
+     looked away can still notice it; a failed one until it is dismissed. */
+  app.get('/transcribe/active', (c) => {
+    const here = current()?.workspace.id
+    const now = Date.now()
+    return c.json(
+      [...jobs.values()]
+        .filter((j) => !j.workspace || j.workspace === here)
+        .filter((j) => j.state !== 'done' || now - (j.endedAt ?? now) < 60_000)
+        .map(({ project: _p, workspace: _w, ...j }) => j),
+    )
+  })
+  app.delete('/transcribe/:id', (c) => {
+    const j = jobs.get(c.req.param('id'))
+    if (j && (j.state === 'failed' || j.state === 'done')) jobs.delete(j.id)
+    return c.json({ ok: true })
+  })
   app.get('/transcribe/:id', (c) => {
     const j = jobs.get(c.req.param('id'))
     return j ? c.json(j) : c.json({ error: 'unknown job' }, 404)
   })
 
-  /* Upcoming meetings from Google Calendar, through Composio. Uses this
-   * workspace's chosen calendar account when one is set. */
+  /* Upcoming meetings from Google Calendar, through Composio: every calendar
+   * account this workspace uses, as one list in the order things happen. With
+   * none chosen, whichever account the CLI falls to, as before. */
   app.get('/calendar/upcoming', async (c) => {
-    const cur = current()
-    const alias = cur?.workspace.composio?.googlecalendar
-    const args = [
-      'execute',
-      'GOOGLECALENDAR_EVENTS_LIST',
-      '-d',
-      JSON.stringify({ calendarId: 'primary', timeMin: new Date().toISOString(), maxResults: 6, singleEvents: true, orderBy: 'startTime' }),
-      ...(alias ? ['--account', alias] : []),
-    ]
-    const { out } = await runComposio(args, 30_000)
-    const start = out.indexOf('{')
-    let r: any = null
-    try {
-      r = start >= 0 ? JSON.parse(out.slice(start, out.lastIndexOf('}') + 1)) : null
-    } catch {}
-    if (!r?.successful) {
-      const missing = /No active connection|link googlecalendar/i.test(r?.error ?? out)
-      return c.json({ connected: !missing, events: [], error: missing ? null : (r?.error ?? 'Calendar unavailable') })
+    const wsId = current()?.workspace.id ?? ''
+    const aliases = accountsFor(current()?.workspace, 'googlecalendar')
+    const key = `${wsId}|${aliases.join('+')}`
+    /* Each account is a CLI run of a few seconds. The page should not sit on
+       "Checking your calendar" for that every time it is opened: what was
+       found last is handed over at once, and looked at again behind it. */
+    const kept = calendars.get(key)
+    const fresh = kept && Date.now() - kept.at < 60_000
+    if (!fresh && !looking.has(key)) {
+      const look = lookAtCalendars(aliases)
+        .then((answer) => void calendars.set(key, { at: Date.now(), answer }))
+        .catch(() => {})
+        .finally(() => looking.delete(key))
+      looking.set(key, look)
     }
-    const items = r.data?.items ?? r.data?.response_data?.items ?? []
-    return c.json({
-      connected: true,
-      events: items.map((e: any) => ({
-        id: e.id,
-        title: e.summary ?? '(no title)',
-        start: e.start?.dateTime ?? e.start?.date,
-        end: e.end?.dateTime ?? e.end?.date,
-        link: e.hangoutLink ?? e.location ?? null,
-        people: (e.attendees ?? []).length,
-      })),
-    })
+    if (kept) return c.json({ ...kept.answer, checking: !fresh })
+    await looking.get(key)
+    return c.json(calendars.get(key)?.answer ?? { connected: false, events: [], calendars: [], error: 'Calendar unavailable' })
   })
 
   app.get('/asset', async (c) => {

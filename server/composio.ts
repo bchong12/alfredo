@@ -36,6 +36,31 @@ const strip = (s: string) =>
     .replace(/\x1b\][^\x07]*\x07/g, '')
     .replace(/\r/g, '')
 
+/**
+ * What went wrong, in words, out of a screenful of drawn box.
+ *
+ * The CLI is talking to a person at a terminal: spinners, rules, and a frame
+ * down the left of every line. Passed along as it stands, its last two lines
+ * are a pipe and a rule, and that is what the app showed — a bar at the bottom
+ * of the screen with a line running off the side of it, saying nothing. The
+ * CLI does mark its trouble, with a square before the sentence that says it,
+ * so that sentence is the one to take, and failing that the last line with
+ * words in it.
+ */
+const FRAME = /^[\s\u2502\u2503|]*[\u25c7\u25c6\u25d2\u25d0\u25d1\u25d3\u25a0\u25a1\u25b2\u25bc\u25b8\u25aa\u00b7.\u2026]*\s*/
+const OUTLINE = /^[\s\u2500-\u257f|_\-=.\u2026\u25a0-\u25ff]*$/
+
+export function whatWentWrong(out: string, fallback: string): string {
+  const said = strip(out)
+    .split('\n')
+    .map((line) => line.replace(/[\s\u2502]+$/, ''))
+    /* A line of frame, rule or spinner has nothing in it to read. */
+    .filter((line) => line.trim() && !OUTLINE.test(line) && /[A-Za-z]{3}/.test(line))
+  const marked = said.find((line) => /^[\s\u2502]*\u25a0/.test(line))
+  const one = (marked ?? said[said.length - 1] ?? '').replace(FRAME, '').trim()
+  return one.slice(0, 300) || fallback
+}
+
 /** Run a composio command in a pseudo-terminal and return what it printed. */
 export function runComposio(args: string[], timeoutMs = 20_000): Promise<{ out: string; code: number }> {
   return new Promise((resolve) => {
@@ -80,7 +105,7 @@ export async function status() {
   return { installed: true, loggedIn: true, email }
 }
 
-export type Account = { id: string; alias: string; status: string; email?: string }
+export type Account = { id: string; alias: string; status: string; email?: string; createdAt?: string }
 
 /** The CLI ends with a JSON block after its spinner lines; take the last one. */
 function lastJson(out: string): any | null {
@@ -105,12 +130,63 @@ export async function accounts(toolkit: string): Promise<Account[]> {
   const { out } = await runComposio(['link', toolkit, '--list'])
   const d = lastJson(out)
   const rows: any[] = Array.isArray(d) ? d : d?.items ?? d?.connected_accounts ?? d?.accounts ?? []
-  return rows.map((r) => ({
+  const list: Account[] = rows.map((r) => ({
     id: String(r.id ?? r.connected_account_id ?? ''),
     alias: String(r.alias ?? r.word_id ?? r.name ?? ''),
     status: String(r.status ?? 'ACTIVE').toUpperCase(),
-    email: r.email ?? r.user_email ?? r.metadata?.email ?? undefined,
+    email: r.email ?? r.user_email ?? r.metadata?.email ?? known()[String(r.id ?? '')] ?? undefined,
+    createdAt: r.created_at ?? undefined,
   }))
+  for (const account of list) if (!account.email) learnWho(toolkit, account)
+  return list
+}
+
+// --- who an account is ---------------------------------------------------------
+//
+// The CLI lists an account by an alias somebody typed or two words it made up,
+// and "carex-basket" does not say whether that is the work calendar or your
+// own. The app it belongs to can say, so it is asked once, with a call that
+// only reads, and the answer is kept: an account's address does not change.
+
+const WHO_FILE = join(appHome(), 'cache', 'composio-who.json')
+/** The read that names the account, per app. Apps not here keep their alias. */
+const WHO: Record<string, { tool: string; args: Record<string, unknown> }> = {
+  googlecalendar: { tool: 'GOOGLECALENDAR_GET_CALENDAR', args: { calendar_id: 'primary' } },
+  gmail: { tool: 'GMAIL_GET_PROFILE', args: { user_id: 'me' } },
+}
+let who: Record<string, string> | null = null
+const known = (): Record<string, string> => {
+  if (!who) {
+    try {
+      who = JSON.parse(readFileSync(WHO_FILE, 'utf8')) as Record<string, string>
+    } catch {
+      who = {}
+    }
+  }
+  return who
+}
+const asking = new Set<string>()
+
+/** Find out whose account this is, behind the screen. Never awaited by a page. */
+function learnWho(toolkit: string, account: Account) {
+  const how = WHO[toolkit]
+  if (!how || !account.id || known()[account.id] || asking.has(account.id) || account.status !== 'ACTIVE') return
+  asking.add(account.id)
+  runComposio(['execute', how.tool, '-d', JSON.stringify(how.args), '--account', account.alias || account.id], 30_000)
+    .then(({ out }) => {
+      const email = /"(?:id|summary|emailAddress|email)"\s*:\s*"([^"\s]+@[^"\s]+)"/.exec(out)?.[1]
+      if (!email) return
+      known()[account.id] = email
+      try {
+        mkdirSync(dirname(WHO_FILE), { recursive: true })
+        writeFileSync(WHO_FILE, JSON.stringify(known()))
+      } catch {}
+      /* The panel's kept answer learns it too, so the next draw has the name. */
+      for (const row of memo?.accounts?.[toolkit] ?? []) if (row.id === account.id) row.email = email
+      if (memo) toDisk(memo)
+    })
+    .catch(() => {})
+    .finally(() => asking.delete(account.id))
 }
 
 // --- one answer for the whole panel -------------------------------------------
@@ -174,6 +250,14 @@ export async function snapshot(force = false): Promise<Snapshot> {
   return have ? { ...have, checking: true } : { status: { installed: installed(), loggedIn: installed(), email: '' }, accounts: {}, at: 0, checking: true }
 }
 
+/** Whose account an alias is, as far as is known: for saying which calendar a
+ *  meeting is on in words a person recognises. Never waits on the CLI. */
+export function whoIs(toolkit: string, alias: string): string | null {
+  const rows = (memo ?? fromDisk())?.accounts?.[toolkit] ?? []
+  const row = rows.find((a) => a.alias === alias || a.id === alias)
+  return row?.email ?? (row ? known()[row.id] : undefined) ?? null
+}
+
 /** After linking or unlinking, the next look should be a real one. */
 export function invalidate() {
   memo = null
@@ -183,12 +267,20 @@ export function invalidate() {
 }
 
 /** Start an OAuth link: the URL to open, and the account id to watch for. */
-export async function linkUrl(toolkit: string, alias?: string) {
+export async function linkUrl(toolkit: string, wanted?: string) {
   const args = ['link', toolkit, '--no-browser', '--no-wait']
-  if (alias) args.push('--alias', alias)
+  /* An alias names one account. A workspace's second calendar asked for under
+     the first one's name is refused, or worse, takes its place: so the name is
+     the workspace's, then the workspace's with a 2, a 3. */
+  let alias = wanted
+  if (alias) {
+    const taken = new Set((await accounts(toolkit).catch(() => [] as Account[])).map((a) => a.alias))
+    for (let n = 2; taken.has(alias) || taken.has(`${toolkit}_${alias}`); n++) alias = `${wanted}-${n}`
+    args.push('--alias', alias)
+  }
   const { out } = await runComposio(args, 30_000)
   const d = lastJson(out)
   const url = d?.redirect_url ?? /https?:\/\/\S+/.exec(out)?.[0]?.replace(/[)\].,│]+$/, '') ?? ''
-  if (!url) throw new Error(out.trim().split('\n').filter(Boolean).slice(-2).join(' ') || 'Composio did not return a link')
-  return { url, accountId: String(d?.connected_account_id ?? '') }
+  if (!url) throw new Error(whatWentWrong(out, 'Composio did not hand back a link. Run composio login in a terminal and try again.'))
+  return { url, accountId: String(d?.connected_account_id ?? d?.id ?? ''), alias: alias ?? '' }
 }

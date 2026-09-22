@@ -8,7 +8,7 @@ import { storeFor, mondayOf, tabsProblem, PACK_KEY, PROJECT_COLORS, STATUSES as 
 import { randomUUID } from 'node:crypto'
 import * as wsReg from './workspaces'
 import { inviteLink } from './invite-link'
-import { ask, findPassages, indexProgress, reindex } from './knowledge'
+import { ask, findPassages, indexProgress, keepReadIn, reindex, touch } from './knowledge'
 import { embedderState } from './embed'
 import * as connect from './connect'
 import * as cfDeploy from './cloudflare-deploy'
@@ -69,7 +69,13 @@ connecting a database, and never repeat back tokens or keys.`,
   // Cloudflare D1 behind its Worker). The tools further down predate that and
   // only work on folder and Supabase workspaces.
 
-  const ws = () => storeFor(current())
+  /* An agent at work is the workspace in use, the same as the app open: it
+     wakes the look for anything not read in yet. */
+  const ws = () => {
+    const store = storeFor(current())
+    keepReadIn(store, current()?.workspace.id ?? '')
+    return store
+  }
   const currentWorkspaceId = () => current()?.workspace.id ?? ''
 
   add(
@@ -336,21 +342,24 @@ connecting a database, and never repeat back tokens or keys.`,
     async ({ kind, id, title, body, status, project }) => {
       const s = ws()
       const pid = id ? null : await projectId(project)
+      /* What an agent writes is read in like anything written in the app, so
+         the next question can find it. */
+      const learn = <T extends { id: string }>(made: T) => (touch(s, kind, made.id, current()?.workspace.id ?? ''), made)
       if (kind === 'card') {
         if (!id) {
           const c = await s.createCard({ title: title ?? 'Untitled', status: status as any })
           if (pid) await s.assign('card', [c.id], pid)
-          return ok(body ? await s.updateCard(c.id, { body }) : c)
+          return ok(learn(body ? await s.updateCard(c.id, { body }) : c))
         }
-        return ok(await s.updateCard(id, { title, body, status: status as any }))
+        return ok(learn(await s.updateCard(id, { title, body, status: status as any })))
       }
       if (!id) {
         const d = await s.createDoc(title ?? 'Untitled', body ?? '')
         if (pid) await s.assign('doc', [d.id], pid)
-        return ok(d)
+        return ok(learn(d))
       }
       const cur = await s.doc(id)
-      return ok(await s.saveDoc(id, { title: title ?? cur.title, body: body ?? cur.body, revision: cur.revision }))
+      return ok(learn(await s.saveDoc(id, { title: title ?? cur.title, body: body ?? cur.body, revision: cur.revision })))
     },
   )
 

@@ -2,9 +2,9 @@
   // Canvas: whiteboards. Frames that hug their content, outlined objects,
   // right-angle arrows, tools along the bottom. Same JSON as React Flow, so a
   // board made elsewhere in that format opens here unchanged.
-  import { scope, canEditHere } from './project.svelte'
+  import { scope, canEditHere, afterMove } from './project.svelte'
   import ProjectChip from './ProjectChip.svelte'
-  import ProjectPicker from './ProjectPicker.svelte'
+  import ItemMenu from './ItemMenu.svelte'
   import { SvelteFlow, Background, BackgroundVariant, type Node, type Edge, type Connection } from '@xyflow/svelte'
   import '@xyflow/svelte/dist/style.css'
   import Plus from '@lucide/svelte/icons/plus'
@@ -353,6 +353,21 @@
     changed()
   }
 
+  /** From a canvas's three dots in the gallery. */
+  async function removeFromList(c: { id: string; title: string }) {
+    if (!confirm(`Delete “${c.title}”?`)) return
+    const before = list
+    list = list.filter((x) => x.id !== c.id)
+    put('/canvases', list)
+    try {
+      await v2.del(`/canvases/${c.id}`)
+    } catch (e) {
+      list = before
+      put('/canvases', before)
+      ui.error = (e as Error).message
+    }
+  }
+
   async function removeCanvas() {
     if (!canvas || !confirm(`Delete “${canvas.title}”?`)) return
     const id = canvas.id
@@ -463,7 +478,6 @@
           {/if}
         </div>
       {/if}
-      {#if canvas}<ProjectPicker kind="canvas" id={canvas.id} project={canvas.project ?? null} onchange={(p) => (list = list.map((x) => (x.id === canvas?.id ? { ...x, project: p } : x)))} />{/if}
       <CopyNode text={whole} as={{ kind: 'canvas', id: canvas.id, title: canvas.title }} label="Copy this canvas for your AI" size={13} />
       <button class="icon" title="Fit board" onclick={() => flow?.fitView({ padding: 0.12, duration: 450 })}><Shapes size={13} /></button>
       <button class="icon" title="Delete canvas" onclick={removeCanvas}><Trash2 size={13} /></button>
@@ -565,9 +579,12 @@
               {#if c.thumb}<img src={`data:image/svg+xml;utf8,${encodeURIComponent(c.thumb)}`} alt="" loading="lazy" />{:else}<span class="blank">Empty canvas</span>{/if}
             </div>
             <div class="info">
-              <span class="t">{c.title}</span>
+              <span class="trow">
+                <span class="t">{c.title}</span>
+                {#if canEditHere()}<span class="more"><ItemMenu kind="canvas" id={c.id} project={c.project ?? null} onopen={() => go(tabId, c.id)} onmoved={(p) => ((list = afterMove(list, c.id, p)), put('/canvases', list))} ondelete={() => removeFromList(c)} /></span>{/if}
+              </span>
               <span class="s">
-                <ProjectChip kind="canvas" id={c.id} project={c.project ?? null} onmoved={(p) => (list = list.map((x) => (x.id === c.id ? { ...x, project: p } : x)))} />
+                <ProjectChip passive kind="canvas" id={c.id} project={c.project ?? null} />
                 Edited {ago(c.updatedAt)}
               </span>
             </div>
@@ -579,7 +596,7 @@
             <div class="empty">
               <Shapes size={20} />
               <p>
-                {#if scope.enabled && scope.id}Nothing here yet. New canvases land in this project; to move an existing one, switch to All projects and use its project chip.
+                {#if scope.enabled && scope.id}Nothing here yet. New canvases land in this project; to move an existing one, open the project it is in (or Unfiled) and use its three dots.
                 {:else}No canvases yet. Start one for a plan, a flow or a retro.{/if}
               </p>
             </div>
@@ -876,6 +893,27 @@
     display: flex;
     flex-wrap: wrap;
     gap: 16px;
+  }
+  .trow {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  }
+  .trow .t {
+    flex: 1;
+    min-width: 0;
+  }
+  .more {
+    display: inline-flex;
+    margin: -4px -4px -4px 0;
+    opacity: 0;
+    transition: opacity 0.12s;
+  }
+  .ccard:hover .more,
+  .more:focus-within,
+  .more:has(:global(.open)) {
+    opacity: 1;
   }
   .ccard {
     width: 300px;

@@ -6,8 +6,9 @@ import { readFile, readdir, stat } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { BITRATE_KBPS, TRANSCRIBE_MODEL, transcribeChunk } from './ai'
 import { localKey } from './keys'
-import { PARAKEET_ENGINE, parakeetAvailable, transcribeLocal } from './parakeet'
-import { ENGINE as ONNX_ENGINE, downloaded as onnxReady, transcribeFile as transcribeOnnx } from './parakeet-onnx'
+import { PARAKEET_ENGINE, parakeetAvailable, transcribeLocalTimed } from './parakeet'
+import { ENGINE as ONNX_ENGINE, downloaded as onnxReady, transcribeFileTimed as transcribeOnnx } from './parakeet-onnx'
+import { withTimes, type Word } from './transcript-times'
 import { ffmpegPath } from './platform'
 
 /** Audio per request. Amigo used 30 minutes; 20 leaves more headroom. */
@@ -87,6 +88,10 @@ async function transcribeOne(path: string, hint: string) {
 }
 
 /** One request, one self-contained audio chunk, already base64. */
+/** The transcript a meeting keeps: what was said, by when it was said. With
+ *  no timings to go by (an engine that gave none), the words as they are. */
+const timed = (words: Word[], text: string) => (words.length ? withTimes(words) : text)
+
 export async function transcribe(audioPath: string) {
   // The same model, by whichever road this machine has. FluidAudio where it
   // exists (CoreML, Apple silicon), ONNX Runtime everywhere else, and
@@ -95,12 +100,13 @@ export async function transcribe(audioPath: string) {
   const want = process.env.ALFREDO_TRANSCRIBE
   if (parakeetAvailable() && want !== 'onnx' && want !== 'hosted') {
     const bytes = await readFile(audioPath)
-    const text = await transcribeLocal(new Uint8Array(bytes), audioPath.split('.').pop() ?? 'wav')
-    return { text, engine: PARAKEET_ENGINE, audioPath, parts: 1 }
+    const heard = await transcribeLocalTimed(new Uint8Array(bytes), audioPath.split('.').pop() ?? 'wav')
+    return { text: heard.text, timed: timed(heard.words, heard.text), engine: PARAKEET_ENGINE, audioPath, parts: 1 }
   }
   if (onnxReady() && want !== 'hosted') {
     const wav = audioPath.endsWith('.wav') ? audioPath : await toWav(audioPath)
-    return { text: await transcribeOnnx(wav), engine: ONNX_ENGINE, audioPath: wav, parts: 1 }
+    const heard = await transcribeOnnx(wav)
+    return { text: heard.text, timed: timed(heard.words, heard.text), engine: ONNX_ENGINE, audioPath: wav, parts: 1 }
   }
   const mp3 = audioPath.endsWith('.mp3') ? audioPath : await compress(audioPath)
   const { size } = await stat(mp3)
@@ -118,7 +124,7 @@ export async function transcribe(audioPath: string) {
     chunks.push(await transcribeOne(part, hint))
   }
 
-  return { text: chunks.join('\n\n'), engine: TRANSCRIBE_MODEL, audioPath: mp3, parts: parts.length }
+  return { text: chunks.join('\n\n'), timed: chunks.join('\n\n'), engine: TRANSCRIBE_MODEL, audioPath: mp3, parts: parts.length }
 }
 
 /**

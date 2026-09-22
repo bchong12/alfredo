@@ -140,12 +140,12 @@ export function inspectInvite(link: string) {
  *
  * A Supabase workspace connects with the publishable key and the person signs
  * in next. A Cloudflare one has its own sign-in: the Worker takes the
- * invitation and a password, and hands back the session this Mac keeps.
+ * invitation (a password too, if one is offered, for signing in elsewhere)
+ * and hands back the session this Mac keeps.
  */
 export async function joinWithLink(link: string, o: { name?: string; password?: string } = {}) {
   const i = readInviteLink(link)
   if (i.kind === 'cloudflare') {
-    if (!o.password || o.password.length < 8) throw new Error('Choose a password of at least 8 characters.')
     const r = await fetch(`${i.url}/api/workspace/auth/join`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },

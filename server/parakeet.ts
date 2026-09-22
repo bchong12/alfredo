@@ -11,11 +11,12 @@
 
 import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { HOME } from './workspaces'
+import type { Word } from './transcript-times'
 
 const run = promisify(execFile)
 
@@ -47,21 +48,38 @@ function ffmpeg() {
  * it and writes the wav Parakeet wants.
  */
 export async function transcribeLocal(bytes: Uint8Array, ext: string): Promise<string> {
+  return (await transcribeLocalTimed(bytes, ext)).text
+}
+
+/** The same, with when each word was said: the CLI writes that to a file
+ *  beside the wav, and prints only the words. */
+export async function transcribeLocalTimed(bytes: Uint8Array, ext: string): Promise<{ text: string; words: Word[] }> {
   const bin = parakeetBin()
   if (!bin) throw new Error('Parakeet is not installed. Run scripts/build-parakeet.sh.')
   const dir = await mkdtemp(join(tmpdir(), 'alfredo-stt-'))
   try {
     const src = join(dir, `src.${ext || 'webm'}`)
     const wav = join(dir, 'in.wav')
+    const timed = join(dir, 'out.json')
     await writeFile(src, bytes)
     await run(ffmpeg(), ['-v', 'error', '-y', '-i', src, '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', wav], {
       timeout: 120_000,
     })
-    const { stdout } = await run(bin, ['transcribe', wav], {
+    const { stdout } = await run(bin, ['transcribe', wav, '--output-json', timed], {
       timeout: 15 * 60_000,
       maxBuffer: 64 * 1024 * 1024,
     })
-    return stdout.trim()
+    let words: Word[] = []
+    let text = stdout.trim()
+    try {
+      const d = JSON.parse(await readFile(timed, 'utf8')) as { text?: string; wordTimings?: { word: string; startTime: number; endTime: number }[] }
+      words = (d.wordTimings ?? []).map((w) => ({ word: w.word, start: w.startTime, end: w.endTime }))
+      /* With the file asked for, the words may go there and not to the screen. */
+      if (d.text?.trim()) text = d.text.trim()
+    } catch {
+      /* An older build of the CLI: the words alone, as before. */
+    }
+    return { text, words }
   } finally {
     await rm(dir, { recursive: true, force: true })
   }

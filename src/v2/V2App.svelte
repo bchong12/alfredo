@@ -8,6 +8,8 @@
   import SettingsModal from './SettingsModal.svelte'
   import Search from './Search.svelte'
   import AddWorkspace from './AddWorkspace.svelte'
+  import Recorder from './Recorder.svelte'
+  import { sync as syncRecording } from './recording.svelte'
   import BoardTab from './BoardTab.svelte'
   import DocsTab from './DocsTab.svelte'
   import CanvasTab from './CanvasTab.svelte'
@@ -66,7 +68,7 @@
     const who = email
     // untrack: loading reads the state it also writes (settings, projects),
     // and a tracked read there would re-run this effect off its own writes.
-    if (id && ok) untrack(() => loadWorkspaceState(who))
+    if (id && ok) untrack(() => (loadWorkspaceState(who), syncRecording()))
     else if (id && needsLogin) {
       // Nothing of the previous workspace stays on screen while this one asks who you are.
       ui.settings = null
@@ -173,6 +175,8 @@
     {/if}
     {#if searching}<Search onclose={() => (searching = false)} />{/if}
     {#if adding}<AddWorkspace onclose={() => (adding = false)} />{/if}
+    <!-- Not while something has gone wrong: that is said in the same place. -->
+    {#if !ui.error}<Recorder />{/if}
     {#if ui.error}
       <div class="toast">
         <span>{ui.error}</span>
@@ -265,7 +269,20 @@
     font-size: 13px;
     z-index: 90;
   }
+  /* Whatever went wrong wrote this, and what went wrong is not always brief:
+     a flex child will not shrink below its content unless it is told it may,
+     and an unbroken line then leaves the box and crosses the screen. */
+  .toast span {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+    line-height: 1.5;
+    max-height: 40vh;
+    overflow-y: auto;
+  }
   .toast button {
+    flex: none;
+    align-self: flex-start;
     background: none;
     border: 0;
     color: var(--muted);

@@ -33,6 +33,29 @@ export const scope = $state({
 
 /** The work that is in no project. Only admins are offered it, to file old work. */
 export const NO_PROJECT = 'none'
+/** Whether something in `project` belongs in the list on screen: everything
+ *  does with no project open, only its own does inside one, and only the
+ *  unfiled under Unfiled. */
+export const belongsHere = (project: string | null | undefined) =>
+  !scope.enabled || !scope.id || (scope.id === NO_PROJECT ? !project : project === scope.id)
+
+/**
+ * A list after one of its items has been moved to `project`. The lists are
+ * cut to a project by the server, so a doc moved out of the one on screen
+ * used to sit there until the page was next loaded, which reads as "it did not
+ * work". Moved out of view it leaves at once; and if the move is refused and
+ * it is moved back, it returns, which is what `parked` is kept for.
+ */
+const parked = new Map<string, unknown>()
+export function afterMove<T extends { id: string; project?: string | null }>(list: T[], id: string, project: string | null): T[] {
+  const item = list.find((x) => x.id === id) ?? (parked.get(id) as T | undefined)
+  if (!item) return list
+  const moved = { ...item, project }
+  parked.set(id, moved)
+  if (!belongsHere(project)) return list.filter((x) => x.id !== id)
+  return list.some((x) => x.id === id) ? list.map((x) => (x.id === id ? moved : x)) : [moved, ...list]
+}
+
 export const activeProject = () => scope.list.find((p) => p.id === scope.id) ?? null
 /** What the switcher says right now. */
 export const projectLabel = () => (scope.id === NO_PROJECT ? 'Unfiled' : (activeProject()?.name ?? 'Pick a project'))

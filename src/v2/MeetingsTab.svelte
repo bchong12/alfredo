@@ -1,10 +1,10 @@
 <script lang="ts">
   // Meetings: transcribed on this Mac by Parakeet. The audio is thrown away as
   // soon as the transcript exists; what stays is the transcript and the notes.
+  import { canEditHere, afterMove } from './project.svelte'
   import { scope } from './project.svelte'
   import ProjectChip from './ProjectChip.svelte'
-  import ProjectPicker from './ProjectPicker.svelte'
-  import { canEditHere } from './project.svelte'
+  import ItemMenu from './ItemMenu.svelte'
   import Cpu from '@lucide/svelte/icons/cpu'
   import Calendar from '@lucide/svelte/icons/calendar'
   import Plus from '@lucide/svelte/icons/plus'
@@ -16,11 +16,11 @@
   import { ui, go, openSettings } from './state.svelte'
   import Skeleton from './Skeleton.svelte'
   import { peek, load as fetchCached, put, prefetch } from './cache'
+  import { rec, recordingNow, writingUp, failedJobs, startRecording, stopRecording, dismiss, onMeetingReady, sync as syncJobs } from './recording.svelte'
 
   let { tabId, tabName = 'Meetings' }: { tabId: string; tabName?: string } = $props()
 
-  type Job = { id: string; state: 'recording' | 'transcribing' | 'writing' | 'done' | 'failed'; meetingId?: string; error?: string; startedAt: number }
-  type Event = { id: string; title: string; start: string; end: string; link: string | null; people: number }
+  type Event = { id: string; title: string; start: string; end: string; link: string | null; people: number; account?: string; calendar?: string }
 
   let meetings = $state<MeetingSummary[]>(peek<MeetingSummary[]>('/meetings') ?? [])
   let loading = $state(!peek('/meetings'))
@@ -28,9 +28,12 @@
   type Hears = { can: boolean; both: boolean; why: string }
   type Onnx = { state: 'idle' | 'downloading' | 'ready' | 'failed'; got: number; of: number; error?: string }
   let engine = $state<{ parakeet: boolean; recording: boolean; install: Install; canRecord?: boolean; localTranscription?: boolean; engine?: string | null; onnx?: Onnx; hears?: Hears } | null>(null)
-  let upcoming = $state<{ connected: boolean; events: Event[] } | null>(null)
-  let job = $state<Job | null>(null)
-  let title = $state('')
+  type Upcoming = { connected: boolean; accounts?: number; calendars?: string[]; checking?: boolean; events: Event[] }
+  // What was there last time, at once; the calendars are asked again behind it.
+  let upcoming = $state<Upcoming | null>(peek<Upcoming>('/calendar/upcoming') ?? null)
+  // What is being recorded or written up lives in the app's frame, not here:
+  // see recording.svelte.ts. This page only draws it.
+  const job = $derived(recordingNow())
   let now = $state(Date.now())
   let meeting = $state<Meeting | null>(null)
   let view = $state<'notes' | 'transcript'>('notes')
@@ -60,7 +63,16 @@
       ui.error = (e as Error).message
     }
   }
-  v2.get<{ connected: boolean; events: Event[] }>('/calendar/upcoming').then((u) => (upcoming = u)).catch(() => (upcoming = { connected: false, events: [] }))
+  async function loadUpcoming(again = 0) {
+    try {
+      upcoming = await fetchCached<Upcoming>('/calendar/upcoming')
+      // The server answers with what it had and looks again: ask once more for that.
+      if (upcoming.checking && again < 3) setTimeout(() => loadUpcoming(again + 1), 5000)
+    } catch {
+      upcoming ??= { connected: false, events: [] }
+    }
+  }
+  loadUpcoming()
 
   $effect(() => {
     const t = setInterval(() => (now = Date.now()), 1000)
@@ -83,38 +95,12 @@
   })
 
   async function start(t = '') {
-    try {
-      const r = await v2.post<{ id: string; startedAt: number }>('/transcribe/start', { title: t || title })
-      job = { id: r.id, state: 'recording', startedAt: r.startedAt }
-      go(tabId)
-    } catch (e) {
-      ui.error = (e as Error).message
-    }
+    if (await startRecording(t)) go(tabId)
   }
-  async function stop() {
-    if (!job) return
-    try {
-      const r = await v2.post<{ id: string }>('/transcribe/stop', { title })
-      job = { ...job, id: r.id, state: 'transcribing' }
-      poll(r.id)
-    } catch (e) {
-      ui.error = (e as Error).message
-    }
-  }
-  async function poll(id: string) {
-    const j = await v2.get<Job>(`/transcribe/${id}`).catch(() => null)
-    if (!j) return
-    job = j
-    if (j.state === 'done' && j.meetingId) {
-      await load()
-      job = null
-      title = ''
-      go(tabId, j.meetingId)
-      return
-    }
-    if (j.state === 'failed') return
-    setTimeout(() => poll(id), 1500)
-  }
+  const stop = () => stopRecording()
+  // A meeting written up while this list is on screen joins it.
+  $effect(() => onMeetingReady(() => load()))
+  syncJobs()
 
   const clock = (ms: number) => {
     const s = Math.max(0, Math.floor(ms / 1000))
@@ -155,6 +141,21 @@
     }
   }
 
+  /** From a meeting's three dots in the list. */
+  async function removeFromList(m: { id: string; title: string }) {
+    if (!confirm(`Delete “${m.title}”? Its transcript and notes go too.`)) return
+    const before = meetings
+    meetings = meetings.filter((x) => x.id !== m.id)
+    put('/meetings', meetings)
+    try {
+      await v2.del(`/meetings/${m.id}`)
+    } catch (e) {
+      meetings = before
+      put('/meetings', before)
+      ui.error = (e as Error).message
+    }
+  }
+
   async function remove() {
     if (!meeting || !confirm(`Delete “${meeting.title}”? Its transcript and notes go too.`)) return
     const id = meeting.id
@@ -170,6 +171,17 @@
       ui.error = (e as Error).message
     }
   }
+
+  /** A transcript in the parts it is drawn in: when, then what was said. */
+  const said = (transcript: string) =>
+    transcript
+      .split(/\n{2,}/)
+      .map((block) => block.trim())
+      .filter(Boolean)
+      .map((block) => {
+        const m = /^\[(\d{1,2}:\d{2}(?::\d{2})?)\]\s*/.exec(block)
+        return m ? { at: m[1], text: block.slice(m[0].length) } : { at: null, text: block }
+      })
 
   const when = (iso: string) =>
     new Date(iso).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
@@ -199,7 +211,6 @@
       <article>
         <input class="mtitle" value={meeting.title} oninput={(e) => queue({ title: e.currentTarget.value })} />
         <div class="meta">
-          <ProjectPicker kind="meeting" id={meeting.id} project={meeting.project ?? null} onchange={(p) => (meeting && (meeting.project = p), (meetings = meetings.map((x) => (x.id === meeting?.id ? { ...x, project: p } : x))))} />
           <span>{when(meeting.startedAt)}</span>
           {#if meeting.durationS}<span>· {dur(meeting.durationS)}</span>{/if}
         </div>
@@ -219,37 +230,32 @@
             <DocEditor value={meeting.notes} onchange={(md) => queue({ notes: md })} placeholder="Notes appear here after the meeting. Write your own too." />
           {/key}
         {:else}
-          <pre class="transcript">{meeting.transcript}</pre>
+          <!-- Each paragraph opens with the moment it began, "[12:40] "; an
+               older transcript with none in it is drawn as it always was. -->
+          <div class="transcript">
+            {#each said(meeting.transcript ?? '') as part, i (i)}
+              <div class="turn" class:timed={!!part.at}>
+                {#if part.at}<span class="at">{part.at}</span>{/if}
+                <p>{part.text}</p>
+              </div>
+            {/each}
+          </div>
         {/if}
       </article>
     </div>
   </div>
 {:else if job}
   <div class="page">
-    <Header crumbs={[{ label: tabName, onclick: () => {} }, 'New meeting']}>
+    <Header crumbs={[{ label: tabName, onclick: () => go(tabId) }, rec.title || 'New meeting']}>
       <span class="state"><Cpu size={12} /> Parakeet · on this Mac</span>
     </Header>
     <div class="live">
-      {#if job.state === 'recording'}
-        <div class="rec"><i></i><span>Listening</span><b>{clock(now - job.startedAt)}</b></div>
-        <input class="mtitle big" placeholder="Name this meeting" bind:value={title} />
-        <p class="note">
-          Recording {engine?.hears?.why ?? 'this machine'}. Speech is turned into text here when you stop; the audio is deleted right
-          after, and only the transcript and notes are kept.
-        </p>
-        <div class="recorder">
-          <div class="wave">{#each Array(14) as _, i}<span style:height="{6 + ((i * 7 + Math.floor(now / 300)) % 20)}px"></span>{/each}</div>
-          <span class="t">{clock(now - job.startedAt)}</span>
-          <button class="stop" onclick={stop}><i></i>Stop</button>
-        </div>
-      {:else if job.state === 'failed'}
-        <h2>That one did not work</h2>
-        <p class="note err">{job.error}</p>
-        <button class="primary" onclick={() => (job = null)}>Back to meetings</button>
-      {:else}
-        <h2>{job.state === 'transcribing' ? 'Transcribing on this Mac…' : 'Writing the notes…'}</h2>
-        <p class="note">This takes about a minute per ten minutes of meeting.</p>
-      {/if}
+      <div class="rec"><i></i><span>Listening</span><b>{clock(now - job.startedAt)}</b></div>
+      <input class="mtitle big" placeholder="Name this meeting" bind:value={rec.title} />
+      <p class="note">
+        Recording {engine?.hears?.why ?? 'this machine'}. Carry on with anything else in Alfredo: the recorder stays at the bottom of the window,
+        and when you stop, the transcript and notes are written in the background and the meeting turns up here. The audio is deleted right after.
+      </p>
     </div>
   </div>
 {:else}
@@ -303,7 +309,11 @@
         <section>
           <div class="sh">
             <span>Up next</span>
-            <span class="src"><Calendar size={12} />Google Calendar via Composio</span>
+            <!-- Which calendars, by the address they belong to: "Google Calendar"
+                 alone does not say whether this is the work one. -->
+            <button class="src" title="Choose which calendars this workspace uses" onclick={() => openSettings('connections')}>
+              <Calendar size={12} />{upcoming?.calendars?.length ? upcoming.calendars.join(' · ') : 'Google Calendar'}
+            </button>
           </div>
           {#if upcoming === null}
             <p class="empty">Checking your calendar…</p>
@@ -315,10 +325,11 @@
           {:else if upcoming.events.length === 0}
             <p class="empty">Nothing on the calendar.</p>
           {:else}
-            {#each upcoming.events as ev (ev.id)}
+            {#each upcoming.events as ev (`${ev.account ?? ''}:${ev.id}`)}
               <div class="event">
                 <span class="bar"></span>
-                <div class="et"><span class="h">{ev.title}</span><span class="s">{when(ev.start)}{ev.people ? ` · ${ev.people} people` : ''}</span></div>
+                <!-- Whose calendar, once there is more than one it could be. -->
+                <div class="et"><span class="h">{ev.title}</span><span class="s">{when(ev.start)}{ev.people ? ` · ${ev.people} people` : ''}{(upcoming.accounts ?? 0) > 1 && ev.calendar ? ` · ${ev.calendar}` : ''}</span></div>
                 <span class="soon">{until(ev.start)}</span>
                 <button class="primary sm" disabled={engine?.canRecord === false || (engine?.parakeet === false && !engine?.engine)} onclick={() => start(ev.title)}><i class="dot"></i>Transcribe</button>
               </div>
@@ -328,19 +339,35 @@
 
         <section>
           <div class="sh"><span>Meetings</span></div>
+          <!-- Stopped, and being turned into a meeting behind the screen. -->
+          {#each writingUp() as j (j.id)}
+            <div class="row pending">
+              <div class="date spin"><i></i></div>
+              <div class="rt"><span class="h">{j.title || 'Meeting'}</span><span class="s">{j.state === 'transcribing' ? 'Transcribing on this Mac…' : 'Writing the notes…'} About a minute per ten minutes of meeting.</span></div>
+            </div>
+          {/each}
+          {#each failedJobs() as j (j.id)}
+            <div class="row pending failed">
+              <div class="rt"><span class="h">{j.title || 'Meeting'} did not work</span><span class="s">{j.error}</span></div>
+              <button class="ghost" onclick={() => dismiss(j.id)}>Dismiss</button>
+            </div>
+          {/each}
           {#each meetings as m (m.id)}
             <button class="row" onclick={() => go(tabId, m.id)} onmouseenter={() => prefetch(`/meetings/${m.id}`)}>
               <div class="date"><span>{day(m.startedAt).toLocaleDateString(undefined, { weekday: 'short' })}</span><b>{day(m.startedAt).getDate()}</b></div>
               <div class="rt"><span class="h">{m.title}</span><span class="s">{m.hasTranscript ? 'Transcript and notes' : m.status === 'failed' ? 'Transcription failed' : 'Notes'} · {ago(m.startedAt)}</span></div>
-              <ProjectChip kind="meeting" id={m.id} project={m.project ?? null} onmoved={(p) => (meetings = meetings.map((x) => (x.id === m.id ? { ...x, project: p } : x)))} />
+              <ProjectChip passive kind="meeting" id={m.id} project={m.project ?? null} />
               <span class="d">{dur(m.durationS)}</span>
+              {#if canEditHere()}<span class="more"><ItemMenu kind="meeting" id={m.id} project={m.project ?? null} onopen={() => go(tabId, m.id)} onmoved={(p) => ((meetings = afterMove(meetings, m.id, p)), put('/meetings', meetings))} ondelete={() => removeFromList(m)} /></span>{/if}
             </button>
           {:else}
-            {#if loading}
+            {#if writingUp().length || failedJobs().length}
+              <!-- One on its way is not "no meetings yet". -->
+            {:else if loading}
               {#each [0, 1, 2] as _}<div class="row sk"><Skeleton w={32} h={30} r={6} /><div class="rt"><Skeleton w="50%" h={12} /><Skeleton w="30%" h={10} /></div></div>{/each}
             {:else}
               <p class="empty">
-                {#if scope.enabled && scope.id}Nothing here yet. Meetings you record in this project land here; to move an existing one, switch to All projects and use its project chip.
+                {#if scope.enabled && scope.id}Nothing here yet. Meetings you record in this project land here; to move an existing one, open the project it is in (or Unfiled) and use its three dots.
                 {:else}No meetings yet.{/if}
               </p>
             {/if}
@@ -462,9 +489,17 @@
     display: flex;
     align-items: center;
     gap: 6px;
+    font: inherit;
     font-size: 12px;
     font-weight: 400;
     color: var(--muted);
+    background: none;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+  }
+  .src:hover {
+    color: var(--ink);
   }
   .connect {
     display: flex;
@@ -552,9 +587,9 @@
   .primary {
     display: flex;
     align-items: center;
-    gap: 8px;
-    height: 30px;
-    padding: 0 12px;
+    gap: 6px;
+    height: 28px;
+    padding: 0 10px;
     border-radius: var(--r-md);
     background: var(--ink);
     color: var(--on-accent);
@@ -578,9 +613,14 @@
     background: #e5484d;
   }
   .ghost {
+    /* An icon and a word sit on one line only when the button says so: left
+       as inline content the plus rides its own baseline, above the text. */
+    display: flex;
+    align-items: center;
+    gap: 6px;
     height: 28px;
-    padding: 0 12px;
-    border-radius: 6px;
+    padding: 0 10px;
+    border-radius: var(--r-md);
     border: 1px solid var(--line-strong);
     background: var(--raised);
     color: var(--ink);
@@ -645,57 +685,39 @@
   .err {
     color: var(--danger);
   }
-  .recorder {
-    position: fixed;
-    left: calc(50% + 116px);
-    bottom: 28px;
-    transform: translateX(-50%);
+  .more {
+    display: inline-flex;
+    opacity: 0;
+    transition: opacity 0.12s;
+  }
+  .row:hover .more,
+  .more:focus-within,
+  .more:has(:global(.open)) {
+    opacity: 1;
+  }
+  .pending {
+    cursor: default;
+  }
+  .pending.failed .s {
+    color: var(--danger);
+  }
+  .spin {
     display: flex;
     align-items: center;
-    gap: 14px;
-    padding: 8px 8px 8px 16px;
-    border-radius: 14px;
-    background: var(--raised);
-    border: 1px solid var(--line-strong);
-    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+    justify-content: center;
   }
-  .wave {
-    display: flex;
-    align-items: center;
-    gap: 3px;
-    height: 28px;
+  .spin i {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 2px solid var(--line-strong);
+    border-top-color: var(--ink-2);
+    animation: spin 0.9s linear infinite;
   }
-  .wave span {
-    width: 3px;
-    border-radius: 2px;
-    background: var(--ink-2);
-    transition: height 0.3s;
-  }
-  .t {
-    font-family: var(--mono);
-    font-size: 13px;
-    width: 48px;
-  }
-  .stop {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    height: 36px;
-    padding: 0 14px;
-    border-radius: 9px;
-    background: #e5484d;
-    color: #fff;
-    border: 0;
-    font: inherit;
-    font-size: 13px;
-    font-weight: 600;
-    cursor: pointer;
-  }
-  .stop i {
-    width: 10px;
-    height: 10px;
-    border-radius: 2px;
-    background: #fff;
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
   }
   article {
     max-width: 720px;
@@ -758,11 +780,29 @@
     cursor: default;
   }
   .transcript {
-    white-space: pre-wrap;
-    font: inherit;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
     font-size: 14px;
-    line-height: 1.7;
-    color: #d4d4d4;
+    line-height: 1.65;
+    color: var(--ink-2);
+  }
+  .turn p {
+    margin: 0;
+    white-space: pre-wrap;
+  }
+  .turn.timed {
+    display: grid;
+    grid-template-columns: 52px 1fr;
+    column-gap: 10px;
+  }
+  .at {
+    font-family: var(--mono);
+    font-size: 11px;
+    line-height: 23px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    user-select: none;
   }
 
   .del {

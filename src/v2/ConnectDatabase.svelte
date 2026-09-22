@@ -121,12 +121,11 @@
   let link = $state('')
   let joining = $state<{ kind: 'supabase' | 'cloudflare'; name: string } | null>(null)
   let joinName = $state('')
-  let joinPassword = $state('')
 
   const lookAtLink = () =>
     attempt(async () => {
       joining = await post<{ kind: 'supabase' | 'cloudflare'; name: string }>('/api/workspaces/join/inspect', { link })
-      // A Cloudflare workspace signs people in itself, so it needs a password now.
+      // A Cloudflare workspace signs people in itself: it asks what to call them first.
       if (joining.kind === 'supabase') await useInvite()
     })
 
@@ -135,7 +134,6 @@
       const r = await post<{ workspace: { id: string }; token: string | null }>('/api/workspaces/join', {
         link,
         name: joinName.trim() || undefined,
-        password: joinPassword || undefined,
       })
       if (r.token) rememberInvite(r.workspace.id, r.token)
       await done(r.workspace.id)
@@ -173,10 +171,12 @@
 
     {#if mode === 'invite'}
       {#if joining?.kind === 'cloudflare'}
-        <p class="lead">You were invited to {joining.name}. Choose a password for it; the workspace keeps your sign-in, and shows you the projects you were put in.</p>
-        <input class="field" placeholder="Your name" bind:value={joinName} />
-        <input class="field" type="password" placeholder="A password, at least 8 characters" bind:value={joinPassword} onkeydown={(e) => e.key === 'Enter' && joinPassword.length >= 8 && useInvite()} />
-        <div><button class="primary" disabled={busy || joinPassword.length < 8} onclick={useInvite}>{busy ? 'Joining…' : 'Join'}</button></div>
+        <!-- The link is the proof: whoever opens it first is that person, with a
+             password asked for or without, so asking for one bought nothing. This
+             Mac stays signed in; another Mac needs another link from an admin. -->
+        <p class="lead">You were invited to {joining.name}. Say what to call you and you are in: this Mac stays signed in, and the workspace shows you the projects you were put in.</p>
+        <input class="field" placeholder="Your name" bind:value={joinName} onkeydown={(e) => e.key === 'Enter' && joinName.trim() && useInvite()} />
+        <div><button class="primary" disabled={busy || !joinName.trim()} onclick={useInvite}>{busy ? 'Joining…' : 'Join'}</button></div>
       {:else}
         <p class="lead">Paste the link an admin sent you. Alfredo connects to their workspace without any secret key, then asks you to sign in; what you can see is their database's decision, not this Mac's.</p>
         <input class="field mono" placeholder="alfredo:join:…" bind:value={link} onkeydown={(e) => e.key === 'Enter' && link.trim() && lookAtLink()} />

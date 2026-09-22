@@ -80,9 +80,19 @@
       },
     })
 
+    /* The editor writes Markdown its own way (a table re-spaced, a list marker
+       changed), so merely being handed a doc makes it report "changed", and
+       opening a doc saved it: "Edited just now" on a page nobody touched, a
+       revision bumped under whoever else had it open. A change is one a person
+       made, so nothing is reported until they have put a hand on the editor. */
+    let touched = false
+    const touch = () => (touched = true)
+    const HANDS = ['keydown', 'beforeinput', 'paste', 'cut', 'drop', 'pointerdown'] as const
+    for (const name of HANDS) el.addEventListener(name, touch, true)
+
     c.on((listener) => {
       listener.markdownUpdated((_ctx, markdown) => {
-        if (!live) return
+        if (!live || !touched) return
         held = markdown
         onchange(markdown)
       })
@@ -105,6 +115,7 @@
 
     return () => {
       live = false
+      for (const name of HANDS) el.removeEventListener(name, touch, true)
       editor?.destroy()
       crepe = null
     }

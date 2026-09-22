@@ -20,7 +20,7 @@ export type Workspace = {
   repos: string[]
   prefix?: string
   canvas?: { baseUrl: string; connected: boolean } | null
-  composio?: Record<string, string>
+  composio?: Record<string, string | string[]>
   automations?: unknown[]
   createdAt: string
 }
@@ -124,7 +124,7 @@ export async function createWorkspace(name: string, repos: string[] = []) {
 
 export async function updateWorkspace(
   id: string,
-  patch: { name?: string; repos?: string[]; prefix?: string; canvas?: { baseUrl: string; token: string } | null; composio?: Record<string, string>; automations?: unknown[] },
+  patch: { name?: string; repos?: string[]; prefix?: string; canvas?: { baseUrl: string; token: string } | null; composio?: Record<string, string | string[]>; automations?: unknown[] },
 ) {
   const w = await send<Workspace>(`/api/workspaces/${id}`, { method: 'PATCH', body: JSON.stringify(patch) })
   workspace.list = workspace.list.map((x) => (x.id === id ? w : x))

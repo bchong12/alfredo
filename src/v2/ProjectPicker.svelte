@@ -38,7 +38,9 @@
 </script>
 
 {#if scope.enabled}
-  <label class="pick">
+  <!-- A div, not a label: a label hands any click inside it to its first
+       button, so clicking away to close the list clicked it open again. -->
+  <div class="pick">
     {#if label}<span>Project</span>{/if}
     <Select
       value={value ?? ''}
@@ -46,13 +48,16 @@
       onchange={(v) => move(v || null)}
       ariaLabel="Project"
     />
-  </label>
+  </div>
 {/if}
 
 <style>
   .pick {
     display: flex;
     flex-direction: column;
+    /* As wide as the project's name, not as wide as the page: in a column the
+       dropdown stretched to fill it, and sat under a title like a second one. */
+    align-items: flex-start;
     gap: 5px;
     font-size: var(--fs-1);
     color: var(--muted);

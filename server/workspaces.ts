@@ -40,8 +40,10 @@ export type Workspace = {
   prefix?: string
   /** Canvas LMS, for pulling assignments onto the board. */
   canvas?: { baseUrl: string; token: string } | null
-  /** Composio: which connected account (by alias) each app uses here. */
-  composio?: Record<string, string>
+  /** Composio: which connected accounts (by alias) each app uses here. One
+   *  alias used to be all there was; a list is what is written now, since a
+   *  person has a work calendar AND their own, and both are this workspace's. */
+  composio?: Record<string, string | string[]>
   /** Scheduled headless Claude runs that can use those connections. */
   automations?: Automation[]
   createdAt: string
@@ -339,4 +341,19 @@ async function seedOwner(d: LocalDb) {
 export async function closeAll() {
   for (const d of opened.values()) await d.close().catch(() => {})
   opened.clear()
+}
+
+/** The accounts a workspace uses for an app, whichever way it was written down. */
+export function accountsFor(w: Pick<Workspace, 'composio'> | null | undefined, slug: string): string[] {
+  const value = w?.composio?.[slug]
+  return (Array.isArray(value) ? value : value ? [value] : []).filter((alias) => typeof alias === 'string' && alias)
+}
+
+/** What an agent is told: "gmail=work,googlecalendar=work+home". */
+export function composioMap(w: Pick<Workspace, 'composio'> | null | undefined): string {
+  return Object.keys(w?.composio ?? {})
+    .map((slug) => [slug, accountsFor(w, slug)] as const)
+    .filter(([, aliases]) => aliases.length)
+    .map(([slug, aliases]) => `${slug}=${aliases.join('+')}`)
+    .join(',')
 }

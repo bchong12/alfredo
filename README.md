@@ -1,4 +1,8 @@
 <p align="center">
+  <sub>Made by <a href="https://purist.design"><b>Purist</b></a>, the design tool your AI agent can open, read and edit. Alfredo is how we run it.</sub>
+</p>
+
+<p align="center">
   <img src="docs/wordmark.svg" alt="Alfredo" width="620">
 </p>
 
@@ -21,9 +25,10 @@
 Alfredo is a Mac app with four tabs, **Board, Docs, Canvas and Meetings**, that
 answers questions about everything written in them. It records and transcribes
 your meetings on your own machine, and it hands the whole workspace to whatever
-AI you already use through an MCP server, so you can say "what did we decide
-about pricing" or "put last week's unfinished cards in this cycle" and mean it.
-Claude Code, Cursor, VS Code, Zed: anything that speaks MCP.
+AI agent you already use through a local MCP server, so you can say "what did
+we decide about pricing" or "put last week's unfinished cards in this cycle" and
+mean it. Every agent that speaks MCP connects the same way: Cursor, Codex,
+Claude Code, Gemini CLI, VS Code, Zed, your own.
 
 There is no account, no server of ours, and no subscription. Each workspace
 lives in a database you choose: a folder on this Mac, your Supabase project, or
@@ -189,8 +194,8 @@ isn't one.
 
 Everything written in a workspace is cut into passages, embedded, and kept in a
 `chunks` table beside the work itself. A question searches those passages two
-ways at once and hands the best of them to Claude Code, which answers from them
-and says where each claim came from.
+ways at once and hands the best of them to the agent on your machine, which
+answers from them and says where each claim came from.
 
 **Reading it in.** A doc, a meeting's notes and transcript, a card or the words
 on a canvas get cut on the writing's own headings, about 380 tokens a piece with
@@ -210,7 +215,7 @@ passage that means what you asked even when it uses different words; full-text
 finds the exact part number, name or phrase that vectors always miss. Fusing
 them means neither has to be right on its own.
 
-**Answering.** Claude Code, on this Mac, from those passages only, with the
+**Answering.** The coding agent on this Mac, from those passages only, with the
 bracketed number of each passage it used. When the workspace does not say, it
 says so rather than filling the gap. There is no hosted fallback: a company's
 own writing is the last thing to hand to a service nobody chose.
@@ -228,15 +233,15 @@ the doc or meeting opens.
 
 Press **Transcribe**. Alfredo records the room and what the call is playing,
 turns it into text on this Mac with [Parakeet](https://github.com/FluidInference/FluidAudio),
-and deletes the audio the moment a transcript exists. Claude Code then writes
-the note: summary, decisions, open questions, and action items with owners and
+and deletes the audio the moment a transcript exists. The agent on this Mac then
+writes the note: summary, decisions, open questions, and action items with owners and
 dates resolved (nobody lets the model do date arithmetic; it says "by Friday"
 and the code works out which Friday). The meeting is saved to your database and
 read into the brain, so the next question can quote it.
 
 Meetings offers to download Parakeet the first time, about 600 MB, needing
-Xcode's command line tools. No Parakeet and no Claude Code still leaves you a
-working tab: **New meeting** makes one you type the notes into yourself.
+Xcode's command line tools. No Parakeet and no agent still leaves you a working
+tab: **New meeting** makes one you type the notes into yourself.
 
 ![A meeting's write-up: summary, decisions, action items with owners and dates](docs/meeting-notes.png)
 
@@ -248,22 +253,28 @@ survives:
 Connect Google Calendar in Settings, Connections, and what is coming up appears
 above the list with a Transcribe button on each.
 
-## Any MCP client, not just Claude
+## Every AI agent, the same way
 
 Alfredo runs a plain [MCP](https://modelcontextprotocol.io) server over
-streamable HTTP at `http://127.0.0.1:29981/mcp`. There is nothing
-Claude-specific in it: any client that speaks MCP can list the tools and call
-them.
-
-```sh
-# Claude Code
-claude mcp add --transport http alfredo http://127.0.0.1:29981/mcp
-```
+streamable HTTP at `http://127.0.0.1:29981/mcp`. It is a local MCP: there is
+nothing in it that belongs to one vendor, so any agent that speaks MCP can list
+the tools and call them.
 
 ```json
 // Cursor (~/.cursor/mcp.json), VS Code, Zed, Windsurf, Goose and the rest
 // take the same thing in their own config file:
 { "mcpServers": { "alfredo": { "url": "http://127.0.0.1:29981/mcp" } } }
+```
+
+```toml
+# Codex (~/.codex/config.toml)
+[mcp_servers.alfredo]
+url = "http://127.0.0.1:29981/mcp"
+```
+
+```sh
+# Claude Code
+claude mcp add --transport http alfredo http://127.0.0.1:29981/mcp
 ```
 
 A client that only speaks stdio can bridge with
@@ -294,9 +305,9 @@ Two of the tools matter most, and they split along exactly this line:
 - **`search_workspace`** hands back the passages and where each came from, and
   nothing else. Whatever model your client runs writes the answer. This is the
   one to use from Cursor, Zed, VS Code or your own SDK client.
-- **`ask_workspace`** writes the answer as well, using Claude Code on this Mac.
-  It needs `claude` on your PATH, because that is the only model Alfredo will
-  show a company's own writing to.
+- **`ask_workspace`** writes the answer as well, using the coding agent on this
+  Mac. Nothing is sent to a service of ours: a company's own writing only ever
+  goes to an agent you installed.
 
 Then talk to it:
 
@@ -323,14 +334,14 @@ Then talk to it:
 The server binds to 127.0.0.1, refuses browser origins and foreign hosts, and
 holds database keys, so it never listens on the network.
 
-### Do you need Claude at all?
+### Do you need an AI at all?
 
 No. The board, docs, canvas, meetings, projects and search all work with no AI
 of any kind. Transcription is Parakeet, on your Mac. Search is the embedding
 model, on your Mac.
 
-Two things use a model, both through Claude Code, locally: writing up a meeting,
-and writing the prose answer to a question. Without it you still get the
+Two things use a model, both through the agent on your machine: writing up a
+meeting, and writing the prose answer to a question. Without it you still get the
 transcript and the passages, and any MCP client can turn those into an answer
 with its own model.
 
@@ -402,8 +413,8 @@ Nothing, unless you ask for it.
 | | Where it happens |
 | --- | --- |
 | Transcription | Parakeet, on this Mac. Only if you have no Parakeet *and* you set `OPENROUTER_API_KEY` does audio go to a hosted model instead |
-| Meeting write-ups | Claude Code, on this Mac, or not at all |
-| Answers from the brain | Claude Code, on this Mac, or not at all |
+| Meeting write-ups | The coding agent on this Mac, or not at all |
+| Answers from the brain | The coding agent on this Mac, or not at all |
 | Embeddings | On this Mac, by a model downloaded once |
 | Your work | The database you chose, and nowhere else |
 

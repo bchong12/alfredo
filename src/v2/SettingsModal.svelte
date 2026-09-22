@@ -92,6 +92,9 @@
   }
   const ROLE_LABEL: Record<ProjectRole, string> = { admin: 'Runs it', write: 'Can edit', read: 'Read only' }
   let openAccess = $state<string | null>(null)
+  /** Whose projects are being chosen, on the Members page. */
+  let openPerson = $state<string | null>(null)
+  const ROLE_WORDS: Record<string, string> = { read: 'reads', write: 'edits', admin: 'runs' }
 
   // --- invitations ---------------------------------------------------------------
   type Invite = { id: string; email: string; role: 'admin' | 'member'; projects: { id: string; role: ProjectRole }[]; createdAt: string; usedAt?: string | null }
@@ -357,60 +360,97 @@
     { slug: 'slack', name: 'Slack', blurb: 'Post notes to a channel', logo: 'https://svgl.app/library/slack.svg', google: false },
     { slug: 'github', name: 'GitHub', blurb: 'Issues become cards', logo: 'https://svgl.app/library/github_dark.svg', google: false },
   ]
-  type Account = { id: string; alias: string; status: string; email?: string }
+  type Account = { id: string; alias: string; status: string; email?: string; createdAt?: string }
   type Snap = { status: { installed: boolean; loggedIn: boolean; email: string }; accounts: Record<string, Account[]>; checking: boolean }
   // Kept across openings of this panel, so it draws the moment you land on it.
   let snap = $state<Snap | null>(lastSnap)
   const composioOk = $derived(snap?.status ?? null)
   const accountsFor = (slug: string) => (snap?.accounts?.[slug] ?? []).filter((a) => a.status === 'ACTIVE')
-  /** The account this workspace uses for an app, by alias. */
-  const chosen = (slug: string) => ws?.composio?.[slug] ?? ''
-  // "googlecalendar_carex-basket" is the toolkit and the account; the toolkit
-  // is already the card, so the name is enough.
-  const accountLabel = (a: Account) => a.email ?? a.alias.replace(/^[a-z0-9]+_/, '') ?? a.id
+  const keyOf = (a: Account) => a.alias || a.id
+  /** The accounts this workspace uses for an app. One alias used to be all a
+   *  workspace could hold, so a bare string is still read as a list of one. */
+  const chosen = (slug: string): string[] => {
+    const value = ws?.composio?.[slug]
+    return (Array.isArray(value) ? value : value ? [value] : []).filter(Boolean)
+  }
+  const usedHere = (slug: string) => accountsFor(slug).filter((a) => chosen(slug).includes(keyOf(a)))
+  const elsewhere = (slug: string) => accountsFor(slug).filter((a) => !chosen(slug).includes(keyOf(a)))
+  /** An account that was chosen here and is no longer on this Mac. */
+  const lost = (slug: string) => chosen(slug).filter((alias) => snap && !snap.checking && !accountsFor(slug).some((a) => keyOf(a) === alias))
+  // Whose it is, when the app could say; otherwise the name it was given,
+  // without the app's own name in front ("googlecalendar_carex-basket").
+  const accountLabel = (a: Account) => a.email ?? (a.alias.replace(/^[a-z0-9]+_/, '') || a.id)
 
   async function loadConnections(refresh = false) {
     try {
       snap = await api<Snap>(`/api/composio/all${refresh ? '?refresh=1' : ''}`)
       lastSnap = snap
-      // A stale answer comes back at once and the real one follows.
+      // A stale answer comes back at once and the real one follows. Names
+      // arrive a little after the accounts do, so look once more for those.
+      const unnamed = Object.values(snap.accounts ?? {}).some((rows) => rows.some((a) => a.status === 'ACTIVE' && !a.email))
       if (snap.checking) setTimeout(() => loadConnections(), 2500)
+      else if (unnamed && !namesAsked) {
+        namesAsked = true
+        setTimeout(() => loadConnections(), 6000)
+      }
     } catch {
       snap = { status: { installed: false, loggedIn: false, email: '' }, accounts: {}, checking: false }
     }
   }
+  let namesAsked = false
   $effect(() => {
     if (ui.settingsPage === 'connections') untrack(() => loadConnections())
   })
 
-  /** Which account this workspace uses for an app. Each workspace picks its own. */
-  async function useAccount(slug: string, alias: string) {
-    if (alias === '__new') return link(slug)
+  async function keep(slug: string, aliases: string[], said: string) {
     const next = { ...(ws?.composio ?? {}) }
-    if (alias) next[slug] = alias
+    if (aliases.length) next[slug] = aliases
     else delete next[slug]
     try {
       await updateWorkspace(ws!.id, { composio: next })
-      flash(alias ? 'This workspace will use that account' : 'Disconnected here')
+      flash(said)
     } catch (e) {
       fail(e)
     }
   }
+  const useAccount = (slug: string, alias: string) => keep(slug, [...new Set([...chosen(slug), alias])], 'This workspace uses that account now')
+  const dropAccount = (slug: string, alias: string) => keep(slug, chosen(slug).filter((a) => a !== alias), 'Not used here any more. It is still connected on this Mac.')
 
+  /** Signing in happens in the browser, and nothing here hears when it is done:
+   *  so the app is asked, every few seconds, whether the account has turned up. */
+  let waiting = $state<Record<string, { id: string; alias: string; until: number }>>({})
   async function link(slug: string) {
     try {
       // The alias says which workspace asked, so accounts stay apart.
-      const r = await post<{ url: string }>('/api/composio/link', { toolkit: slug, alias: ws?.id })
+      const r = await post<{ url: string; accountId: string; alias: string }>('/api/composio/link', { toolkit: slug, alias: ws?.id })
       window.open(r.url, '_blank')
-      flash('Finish signing in in your browser, then come back')
-      setTimeout(() => loadConnections(true), 4000)
+      waiting = { ...waiting, [slug]: { id: r.accountId, alias: r.alias, until: Date.now() + 5 * 60_000 } }
+      watch(slug)
     } catch (e) {
       fail(e)
     }
   }
+  function stopWaiting(slug: string) {
+    const { [slug]: _done, ...rest } = waiting
+    waiting = rest
+  }
+  async function watch(slug: string) {
+    const w = waiting[slug]
+    if (!w) return
+    if (Date.now() > w.until || ui.settingsPage !== 'connections') return stopWaiting(slug)
+    const before = new Set(accountsFor(slug).map((a) => a.id))
+    const rows = await api<Account[]>(`/api/composio/accounts?toolkit=${slug}`).catch(() => [] as Account[])
+    if (!waiting[slug]) return
+    const arrived = (Array.isArray(rows) ? rows : []).find((a) => a.status === 'ACTIVE' && (w.id ? a.id === w.id : !before.has(a.id)))
+    if (!arrived) return void setTimeout(() => watch(slug), 3000)
+    stopWaiting(slug)
+    await useAccount(slug, keyOf(arrived))
+    namesAsked = false
+    await loadConnections(true)
+  }
 
   // --- models --------------------------------------------------------------------
-  type Brain = { model: string; downloaded: boolean; chunks: number; progress: { state: string; done: number; total: number; error?: string } }
+  type Brain = { model: string; downloaded: boolean; chunks: number; onThisMac?: boolean; progress: { state: string; done: number; total: number; error?: string } }
   let brain = $state<Brain | null>(null)
   let watching: ReturnType<typeof setTimeout> | undefined
   async function loadBrain() {
@@ -554,7 +594,7 @@
                               width="130px"
                               align="right"
                               options={[
-                              { value: '', label: 'Not in it' },
+                              { value: '', label: 'No access' },
                               { value: 'read', label: 'Read only' },
                               { value: 'write', label: 'Can edit' },
                               { value: 'admin', label: 'Runs it' },
@@ -689,7 +729,10 @@
               />
               <button class="primary" onclick={makeInvite}>{invitesAreLinks ? 'Make a link' : 'Add'}</button>
             </div>
-            {#if invitesAreLinks && scope.enabled && projects.length}
+            {#if invitesAreLinks && scope.enabled && projects.length && inviteRole === 'admin'}
+              <p class="note">An admin opens every project and decides who else can, so there is nothing to choose.</p>
+            {:else if invitesAreLinks && scope.enabled && projects.length}
+              <div class="lab sub"><b>Projects they can open</b><span>A member sees only the projects you give them here. Leave one at No access and it does not exist for them.</span></div>
               <div class="people">
                 {#each projects as p (p.id)}
                   <div class="who">
@@ -700,7 +743,7 @@
                       width="130px"
                       align="right"
                       options={[
-                              { value: '', label: 'Not in it' },
+                              { value: '', label: 'No access' },
                               { value: 'read', label: 'Read only' },
                               { value: 'write', label: 'Can edit' },
                               { value: 'admin', label: 'Runs it' },
@@ -716,6 +759,9 @@
                   </div>
                 {/each}
               </div>
+              {#if !Object.keys(inviteProjects).length}
+                <p class="note">Every project is at No access, so this person would see only work that is in no project. Pick what they can open before making the link.</p>
+              {/if}
             {/if}
             {#if madeLink}
               <div class="linkbox">
@@ -738,7 +784,15 @@
               <div class="plist">
                 {#each invites.filter((i) => !i.usedAt) as i (i.id)}
                   <div class="prow">
-                    <span class="dbt grow"><span class="h">{i.email}</span><span class="s">{i.role === 'admin' ? 'Admin' : 'Member'}{i.projects.length ? ` · ${i.projects.length} project${i.projects.length === 1 ? '' : 's'}` : ''}</span></span>
+                    <span class="dbt grow">
+                      <span class="h">{i.email}</span>
+                      <span class="s">
+                        {#if i.role === 'admin'}Admin · every project
+                        {:else if !scope.enabled || !projects.length}Member
+                        {:else if i.projects.length}Member · {i.projects.map((x) => `${projects.find((p) => p.id === x.id)?.name ?? 'a project'} (${ROLE_WORDS[x.role] ?? 'reads'})`).join(', ')}
+                        {:else}Member · no projects, so only work that is in none. Revoke and invite again to change that.{/if}
+                      </span>
+                    </span>
                     <button class="ghost" onclick={() => revokeInvite(i.id)}>Revoke</button>
                   </div>
                 {/each}
@@ -754,7 +808,22 @@
                 <Face person={p} size={30} />
                 <input type="file" accept="image/png,image/jpeg,image/webp" onchange={(e) => uploadFace(e, p.id)} />
               </label>
-              <div class="dbt grow"><span class="h">{p.name}{p.id === ui.me?.id ? ' (you)' : ''}</span><span class="s">{p.email ?? ''}</span></div>
+              <div class="dbt grow">
+                <span class="h">{p.name}{p.id === ui.me?.id ? ' (you)' : ''}</span>
+                <span class="s">{p.email ?? ''}</span>
+                {#if scope.enabled && projects.length}
+                  <span class="s">
+                    {#if p.role === 'admin'}Every project
+                    {:else}
+                      {@const mine = projects.filter((x) => roleIn(x, p.id))}
+                      {mine.length ? mine.map((x) => `${x.name} (${ROLE_WORDS[roleIn(x, p.id) ?? 'read']})`).join(' · ') : 'No projects yet'}
+                    {/if}
+                  </span>
+                {/if}
+              </div>
+              {#if scope.canManage && scope.enabled && projects.length && p.role !== 'admin'}
+                <button class="ghost" onclick={() => (openPerson = openPerson === p.id ? null : p.id)}>{openPerson === p.id ? 'Done' : 'Projects'}</button>
+              {/if}
               <div class="w110">
                 {#if ws?.kind === 'cloudflare' || !scope.canManage}
                   <span class="role">{#if p.role === 'admin'}<Shield size={11} />{/if}{p.role === 'admin' ? 'Admin' : p.role === 'viewer' ? 'Viewer' : 'Member'}</span>
@@ -773,8 +842,37 @@
                 {/if}
               </div>
             </div>
+            {#if openPerson === p.id && p.role !== 'admin'}
+              <div class="access">
+                <p class="note">What {p.name} can open. Anything left at No access does not exist for them: not in the sidebar, not in search, not in answers.</p>
+                <div class="people">
+                  {#each projects as proj, i (proj.id)}
+                    <div class="who">
+                      <i class="pdot {proj.color}"></i>
+                      <span class="wname">{proj.name}</span>
+                      <Select
+                        value={roleIn(proj, p.id) ?? ''}
+                        width="130px"
+                        align="right"
+                        options={[
+                          { value: '', label: 'No access' },
+                          { value: 'read', label: 'Read only' },
+                          { value: 'write', label: 'Can edit' },
+                          { value: 'admin', label: 'Runs it' },
+                        ]}
+                        onchange={(v) => setRoleIn(i, p.id, (v || null) as ProjectRole | null)}
+                        ariaLabel="What {p.name} may do in {proj.name}"
+                      />
+                    </div>
+                  {/each}
+                </div>
+              </div>
+            {/if}
           {/each}
         </div>
+        {#if scope.canManage && scope.enabled}
+          <p class="note">Admins run the workspace: they open every project, invite people and decide who sees what. Everyone else opens only the projects they are given, here or on the Projects page.</p>
+        {/if}
       {:else if ui.settingsPage === 'database'}
         <p class="lead">Each workspace keeps its own database. Switching workspaces switches databases.</p>
         <div class="opt on">
@@ -795,7 +893,7 @@
         <ConnectDatabase onconnected={() => (ui.overlay = null)} />
       {:else if ui.settingsPage === 'connections'}
         <p class="lead">
-          Bring your email, calendar and tools into {ui.settings?.name}. Each workspace picks which account it uses, so work and side projects stay apart.
+          Bring your email, calendar and tools into {ui.settings?.name}. Each workspace picks the accounts it uses, as many as it needs, so work and side projects stay apart.
           {#if snap?.checking}<span class="s"> Checking…</span>{/if}
         </p>
         {#if composioOk && !composioOk.loggedIn}
@@ -805,26 +903,48 @@
           <span class="g2">{google ? 'Google Workspace' : 'More'}</span>
           <div class="apps">
             {#each APPS.filter((a) => a.google === google) as a (a.slug)}
-              {@const rows = accountsFor(a.slug)}
-              {@const here = chosen(a.slug)}
-              <div class="app" class:on={!!here}>
-                <span class="al"><img src={a.logo} alt="" loading="lazy" /></span>
-                <div class="dbt grow"><span class="h">{a.name}</span><span class="s">{a.blurb}</span></div>
-                {#if rows.length}
-                  <Select
-                    value={here}
-                    width="150px"
-                    align="right"
-                    options={[
-                      { value: '', label: 'Not here' },
-                      ...rows.map((acc) => ({ value: acc.alias || acc.id, label: accountLabel(acc) })),
-                      { value: '__new', label: 'Connect another…' },
-                    ]}
-                    onchange={(v) => useAccount(a.slug, v)}
-                    ariaLabel="Which account {a.name} uses here"
-                  />
-                {:else}
-                  <button class="ghost" onclick={() => link(a.slug)}>Connect</button>
+              {@const here = usedHere(a.slug)}
+              {@const others = elsewhere(a.slug)}
+              {@const gone = lost(a.slug)}
+              {@const wait = waiting[a.slug]}
+              <div class="app" class:on={here.length > 0}>
+                <div class="apphead">
+                  <span class="al"><img src={a.logo} alt="" loading="lazy" /></span>
+                  <div class="dbt grow"><span class="h">{a.name}</span><span class="s">{a.blurb}</span></div>
+                  {#if wait}
+                    <span class="waiting"><i></i>Waiting for your browser</span>
+                    <button class="quiet" onclick={() => stopWaiting(a.slug)}>Cancel</button>
+                  {:else if others.length}
+                    <Select
+                      value=""
+                      placeholder={here.length ? 'Add account' : 'Choose account'}
+                      width="132px"
+                      align="right"
+                      options={[...others.map((acc) => ({ value: keyOf(acc), label: accountLabel(acc) })), { value: '__new', label: 'Connect a new one…' }]}
+                      onchange={(v) => (v === '__new' ? link(a.slug) : useAccount(a.slug, v))}
+                      ariaLabel="Add an account for {a.name}"
+                    />
+                  {:else}
+                    <button class="ghost" disabled={composioOk?.loggedIn === false} onclick={() => link(a.slug)}>{here.length ? 'Add account' : 'Connect'}</button>
+                  {/if}
+                </div>
+                {#if here.length || gone.length}
+                  <ul class="accts">
+                    {#each here as acc (acc.id)}
+                      <li>
+                        <i class="live"></i>
+                        <span class="who" title={acc.alias}>{accountLabel(acc)}</span>
+                        <button class="x" title="Stop using it in this workspace" aria-label="Stop using {accountLabel(acc)} here" onclick={() => dropAccount(a.slug, keyOf(acc))}><X size={12} /></button>
+                      </li>
+                    {/each}
+                    {#each gone as alias (alias)}
+                      <li class="gone">
+                        <i></i>
+                        <span class="who">{alias.replace(/^[a-z0-9]+_/, '')} is no longer connected on this Mac</span>
+                        <button class="x" title="Remove" aria-label="Remove {alias}" onclick={() => dropAccount(a.slug, alias)}><X size={12} /></button>
+                      </li>
+                    {/each}
+                  </ul>
                 {/if}
               </div>
             {/each}
@@ -847,11 +967,11 @@
               <div class="dbt grow">
                 <span class="h">The workspace, read in</span>
                 <span class="s">
-                  Everything written down here, cut into passages and turned into numbers on this Mac, so ⌘K can answer questions from it. Claude Code writes the answers; nothing is sent anywhere.
+                  Everything written down here, cut into passages and turned into numbers on this Mac, so ⌘K can answer questions from it. The coding agent on this Mac writes the answers; nothing is sent anywhere.
                 </span>
               </div>
               {#if brain}
-                <span class="ok" class:bad={!brain.chunks}><i></i>{brain.chunks ? `${brain.chunks} passages` : 'Not read yet'}</span>
+                <span class="ok" class:bad={!brain.chunks && brain.progress?.state !== 'running'}><i></i>{brain.progress?.state === 'running' ? 'Reading it in…' : brain.chunks ? `${brain.chunks} passages` : 'Not read yet'}</span>
               {/if}
             </div>
             <div class="form">
@@ -864,7 +984,8 @@
               {#if brain?.progress?.state === 'failed'}<p class="err">{brain.progress.error}</p>{/if}
               <p class="note">
                 {brain?.downloaded ? `Model: ${brain.model}, on this Mac.` : `Model: ${brain?.model ?? 'bge-small'}, about 34 MB, downloaded the first time you read a workspace in.`}
-                New work is read in as it is saved; this is for everything that came before.
+                It keeps itself read in: new and changed work is picked up as it is saved and whenever the workspace is opened, so there is nothing to press. Reading it again rebuilds it from scratch.
+                {#if brain?.onThisMac && brain.chunks}This workspace's database has nowhere to keep passages, so they are kept on this Mac: a teammate reads the workspace in on theirs.{/if}
               </p>
             </div>
           </div>
@@ -1515,7 +1636,9 @@
     display: flex;
     align-items: center;
     gap: 12px;
-    height: 52px;
+    min-height: 52px;
+    padding: 8px 0;
+    box-sizing: border-box;
     border-bottom: 1px solid var(--line);
   }
   .w110 {
@@ -1544,22 +1667,137 @@
   .apps {
     display: flex;
     flex-wrap: wrap;
+    /* A card is as tall as its own accounts, not its neighbour's. */
+    align-items: flex-start;
     gap: 10px;
   }
   .app {
     width: calc(50% - 5px);
     box-sizing: border-box;
+    flex-direction: column;
+    align-items: stretch;
     gap: 10px;
+  }
+  .apphead {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+  .accts {
+    list-style: none;
+    margin: 0;
+    padding: 8px 0 0;
+    border-top: 1px solid var(--line);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .accts li {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 26px;
+    padding: 0 2px 0 4px;
+    border-radius: 6px;
+    font-size: 12px;
+    color: var(--ink-2);
+  }
+  .accts li:hover {
+    background: var(--raised);
+  }
+  .accts i {
+    width: 6px;
+    height: 6px;
+    flex: none;
+    border-radius: 50%;
+    background: var(--muted);
+  }
+  .accts i.live {
+    background: #46a758;
+  }
+  .accts .gone {
+    color: var(--muted);
+  }
+  .who {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .x {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    flex: none;
+    border: 0;
+    border-radius: 5px;
+    background: none;
+    color: var(--muted);
+    cursor: pointer;
+    opacity: 0;
+  }
+  .accts li:hover .x,
+  .x:focus-visible {
+    opacity: 1;
+  }
+  .x:hover {
+    color: var(--ink);
+    background: var(--line);
+  }
+  .waiting {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 12px;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  .waiting i {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--ink-2);
+    animation: waiting 1.2s ease-in-out infinite;
+  }
+  @keyframes waiting {
+    50% {
+      opacity: 0.25;
+    }
+  }
+  .quiet {
+    border: 0;
+    background: none;
+    font: inherit;
+    font-size: 12px;
+    color: var(--muted);
+    cursor: pointer;
+    padding: 0 2px;
+  }
+  .quiet:hover {
+    color: var(--ink);
   }
   /* The name never wraps because an account name is long. */
   .app .dbt {
     min-width: 0;
   }
-  .app .h,
-  .app .s {
+  .app .h {
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
+  }
+  /* What the app is for is the one line that says why to connect it, so it
+     wraps rather than being cut off beside the account picker. */
+  .app .s {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    line-height: 1.35;
   }
   .al {
     width: 34px;

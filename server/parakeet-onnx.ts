@@ -22,6 +22,7 @@ import { join } from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { appHome } from './home'
+import type { Word } from './transcript-times'
 
 const REPO = process.env.ALFREDO_PARAKEET_REPO ?? 'istupakov/parakeet-tdt-0.6b-v3-onnx'
 const DIR = () => join(appHome(), 'models', 'parakeet')
@@ -227,16 +228,23 @@ async function listen(audio: Float32Array): Promise<{ text: string; at: number }
  * so a word spoken across a seam is still heard once.
  */
 export async function transcribeFile(path: string): Promise<string> {
+  return (await transcribeFileTimed(path)).text
+}
+
+/** The same, keeping when each word began: a token that opens with a space
+ *  opens a word, and a word ends where the next begins. */
+export async function transcribeFileTimed(path: string): Promise<{ text: string; words: Word[] }> {
   const audio = readWav(await readFile(path))
   const chunk = CHUNK_S * RATE
   const overlap = OVERLAP_S * RATE
-  const out: string[] = []
+  const tokens: { text: string; at: number }[] = []
   for (let start = 0; start < audio.length; start += chunk - overlap) {
     const piece = audio.subarray(start, Math.min(audio.length, start + chunk))
     if (piece.length < RATE / 4) break
     const said = await listen(piece)
+    const offset = start / RATE
     if (start === 0) {
-      out.push(said.map((s) => s.text).join(''))
+      tokens.push(...said.map((s) => ({ text: s.text, at: s.at + offset })))
     } else {
       // Everything inside the overlap was already heard by the piece before
       // it. Starting at the first token that opens a word, rather than at the
@@ -244,9 +252,23 @@ export async function transcribeFile(path: string): Promise<string> {
       // its own tail: "15" cut in two is "1" there and "5." here.
       const kept = said.filter((s) => s.at >= OVERLAP_S)
       const opens = kept.findIndex((s) => s.text.startsWith(' '))
-      out.push(kept.slice(opens < 0 ? 0 : opens).map((s) => s.text).join(''))
+      const fresh = kept.slice(opens < 0 ? 0 : opens).map((s) => ({ text: s.text, at: s.at + offset }))
+      if (fresh.length && !fresh[0].text.startsWith(' ')) fresh[0].text = ` ${fresh[0].text}`
+      tokens.push(...fresh)
     }
     if (start + chunk >= audio.length) break
   }
-  return out.join(' ').replace(/\s+/g, ' ').trim()
+  const words: Word[] = []
+  for (const t of tokens) {
+    const open = words[words.length - 1]
+    if (!open || t.text.startsWith(' ')) {
+      if (open) open.end = Math.max(open.start, t.at)
+      words.push({ word: t.text.trim(), start: t.at, end: t.at + FRAME_S })
+    } else {
+      open.word += t.text
+      open.end = t.at + FRAME_S
+    }
+  }
+  const text = tokens.map((t) => t.text).join('').replace(/\s+/g, ' ').trim()
+  return { text, words: words.filter((w) => w.word) }
 }

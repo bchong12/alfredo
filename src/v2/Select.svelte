@@ -35,10 +35,28 @@
   let root = $state<HTMLDivElement | null>(null)
   const current = $derived(options.find((o) => o.value === value) ?? null)
 
+  /* The list is drawn over the whole window, not inside whatever the field
+     sits in. A row that clips its own overflow (the people lists in Settings
+     do, to keep long names on one line) used to clip the list with it: the
+     dropdown opened, and nothing showed. Placed from where the field is on
+     screen, under it, or above it near the bottom of the window. */
+  let at = $state({ left: 0, top: 0, width: 0, up: false })
+  function place() {
+    if (!root) return
+    const r = root.getBoundingClientRect()
+    const height = Math.min(260, options.length * 28 + 10)
+    const up = r.bottom + 4 + height > window.innerHeight - 8 && r.top - 4 - height > 8
+    at = { left: r.left, top: up ? r.top - 4 - height : r.bottom + 4, width: r.width, up }
+  }
   function show() {
     if (disabled) return
     active = Math.max(0, options.findIndex((o) => o.value === value))
+    place()
     open = true
+  }
+  function floated(node: HTMLElement) {
+    document.body.appendChild(node)
+    return { destroy: () => node.remove() }
   }
 
   function pick(v: string) {
@@ -88,10 +106,19 @@
   </button>
 
   {#if open}
+    <div class="layer" use:floated>
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="catch" onclick={(e) => (e.stopPropagation(), (open = false))}></div>
-    <div class="menu" class:right={align === 'right'} role="listbox" tabindex="-1">
+    <div class="catch" onclick={(e) => (e.stopPropagation(), (open = false))} onwheel={() => (open = false)}></div>
+    <div
+      class="menu"
+      role="listbox"
+      tabindex="-1"
+      style:top="{at.top}px"
+      style:min-width="{at.width}px"
+      style:left={align === 'right' ? 'auto' : `${at.left}px`}
+      style:right={align === 'right' ? `${Math.max(8, window.innerWidth - at.left - at.width)}px` : 'auto'}
+    >
       {#each options as o, i (o.value)}
         <button
           type="button"
@@ -110,8 +137,11 @@
         </button>
       {/each}
     </div>
+    </div>
   {/if}
 </div>
+
+<svelte:window onresize={() => (open = false)} />
 
 <style>
   .sel {
@@ -167,28 +197,26 @@
   .field.open :global(.caret) {
     transform: rotate(180deg);
   }
-  .catch {
+  .layer {
     position: fixed;
     inset: 0;
-    z-index: 80;
+    z-index: 95;
+    font-size: var(--fs-3);
+    color: var(--ink);
+  }
+  .catch {
+    position: absolute;
+    inset: 0;
   }
   .menu {
-    position: absolute;
-    top: calc(100% + 4px);
-    left: 0;
-    min-width: 100%;
+    position: fixed;
     max-height: 260px;
     overflow: auto;
-    z-index: 90;
     padding: 4px;
     border-radius: var(--r-lg);
     background: var(--panel);
     border: 1px solid var(--line-strong);
     box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
-  }
-  .menu.right {
-    left: auto;
-    right: 0;
   }
   .opt {
     display: flex;

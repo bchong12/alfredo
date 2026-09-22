@@ -168,7 +168,7 @@ app.patch('/api/workspaces/:id', async (c) => {
     repos?: string[]
     prefix?: string
     canvas?: { baseUrl: string; token: string } | null
-    composio?: Record<string, string>
+    composio?: Record<string, string | string[]>
     automations?: ws.Automation[]
   }>()
   // A blank token means "keep the one you have": the browser never sees it.
