@@ -63,7 +63,7 @@ run it. The Windows build is not code-signed yet, so SmartScreen asks once:
 *More info*, then *Run anyway*.
 
 If someone sent you an invite, open Alfredo, choose **Add workspace**, then
-**I have an invite**, and paste their link.
+**I have a link**, and paste their link.
 
 ## Run it
 

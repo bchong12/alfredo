@@ -149,7 +149,7 @@ export async function joinWithLink(link: string, o: { name?: string; password?: 
     const r = await fetch(`${i.url}/api/workspace/auth/join`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ invite: i.token, name: o.name, password: o.password }),
+      body: JSON.stringify({ invite: i.token!, name: o.name, password: o.password }),
     })
     const data = (await r.json().catch(() => null)) as { token?: string; error?: string } | null
     if (!r.ok || !data?.token) throw new Error(data?.error ?? `That Worker answered ${r.status}.`)
@@ -160,7 +160,8 @@ export async function joinWithLink(link: string, o: { name?: string; password?: 
   }
   const have = ws.list().find((w) => w.kind === 'remote' && w.supabase?.url === i.url)
   const w = have ?? ws.createSupabase({ name: i.name, url: i.url, anonKey: i.anonKey! })
-  return { workspace: ws.publicView(w), token: i.token, signedIn: false }
+  // No token means no invitation to spend: they sign in as they already can.
+  return { workspace: ws.publicView(w), token: i.token ?? null, signedIn: false }
 }
 
 /** Spend the invitation as the person who just signed in. */

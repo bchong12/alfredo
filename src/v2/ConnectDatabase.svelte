@@ -163,11 +163,11 @@
     </button>
     <button class="opt" onclick={() => choose('invite')}>
       <span class="dbi"><Ticket size={15} /></span>
-      <span class="dbt"><b>I have an invite</b><span>Someone sent you a link to their workspace. You need no keys and no name: the link carries both.</span></span>
+      <span class="dbt"><b>I have a link</b><span>Someone sent you an invitation, or the link to a workspace you already have an account in. You need no keys: the link carries them.</span></span>
     </button>
     <p class="hint">Or ask Claude through the Alfredo MCP: “connect my Supabase project to a new workspace”.</p>
   {:else}
-    <button class="back" onclick={() => ((mode = null), (err = ''), (setup = null), (job = null))} disabled={busy}><ArrowLeft size={13} /> {mode === 'invite' ? 'Invite' : name}</button>
+    <button class="back" onclick={() => ((mode = null), (err = ''), (setup = null), (job = null))} disabled={busy}><ArrowLeft size={13} /> {mode === 'invite' ? 'Link' : name}</button>
 
     {#if mode === 'invite'}
       {#if joining?.kind === 'cloudflare'}
@@ -178,7 +178,7 @@
         <input class="field" placeholder="Your name" bind:value={joinName} onkeydown={(e) => e.key === 'Enter' && joinName.trim() && useInvite()} />
         <div><button class="primary" disabled={busy || !joinName.trim()} onclick={useInvite}>{busy ? 'Joining…' : 'Join'}</button></div>
       {:else}
-        <p class="lead">Paste the link an admin sent you. Alfredo connects to their workspace without any secret key, then asks you to sign in; what you can see is their database's decision, not this Mac's.</p>
+        <p class="lead">Paste the link an admin sent you. Alfredo connects to their workspace without any secret key, then asks you to sign in (with the account you already have there, if you have one); what you can see is their database's decision, not this Mac's.</p>
         <input class="field mono" placeholder="alfredo:join:…" bind:value={link} onkeydown={(e) => e.key === 'Enter' && link.trim() && lookAtLink()} />
         <div><button class="primary" disabled={busy || !link.trim()} onclick={lookAtLink}>{busy ? 'Connecting…' : 'Continue'}</button></div>
       {/if}
@@ -260,7 +260,7 @@
             <div><button class="primary" disabled={busy} onclick={createCloudflare}>Create on Cloudflare</button></div>
           {/if}
         {:else}
-          <p class="lead">A Worker that speaks Alfredo's workspace API (cloudflare/worker.mjs in Alfredo's repo). The token goes to this Mac's keychain.</p>
+          <p class="lead">A Worker that speaks Alfredo's workspace API (Alfredo's own template, or a compatible one). The token goes to this Mac's keychain.</p>
           <input class="field mono" placeholder="https://your-worker.workers.dev" bind:value={cf.url} />
           <input class="field mono" type="password" placeholder="Workspace API token" bind:value={cf.token} />
           <div><button class="primary" disabled={busy || !cf.url || !cf.token} onclick={connectExisting}>{busy ? 'Checking…' : 'Connect'}</button></div>

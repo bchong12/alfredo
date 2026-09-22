@@ -174,7 +174,7 @@
         '',
         `${location.origin}/#${madeLink}`,
         '',
-        `To have it as an app on your Mac instead: download Alfredo (${DOWNLOAD}), choose Add workspace, then "I have an invite", and paste this:`,
+        `To have it as an app on your Mac instead: download Alfredo (${DOWNLOAD}), choose Add workspace, then "I have a link", and paste this:`,
         '',
         madeLink,
         '',
@@ -187,7 +187,7 @@
       "Alfredo is a free app for a team's board, docs, canvases and meetings, kept in a database the team owns.",
       '',
       `1. Download it: ${DOWNLOAD}`,
-      '2. Open Alfredo, choose Add workspace, then "I have an invite"',
+      '2. Open Alfredo, choose Add workspace, then "I have a link"',
       `3. Paste this, and sign in as ${as}:`,
       '',
       madeLink,
@@ -202,6 +202,18 @@
       invitationCopied = true
       setTimeout(() => (invitationCopied = false), 1600)
     } catch {}
+  }
+
+  let workspaceLinkCopied = $state(false)
+  const copyWorkspaceLink = async () => {
+    try {
+      const r = await v2.get<{ link: string }>('/workspace-link')
+      await navigator.clipboard.writeText(r.link)
+      workspaceLinkCopied = true
+      setTimeout(() => (workspaceLinkCopied = false), 1600)
+    } catch (e) {
+      fail(e)
+    }
   }
 
   const copyLink = async () => {
@@ -801,6 +813,17 @@
               </div>
             {/if}
           </section>
+          {#if invitesAreLinks && ws?.kind === 'remote'}
+            <section>
+              <div class="lab">
+                <b>Someone who already has an account here</b>
+                <span>They need no invitation, only where the workspace is. This link says that and nothing secret: they paste it into Add workspace, I have a link, and sign in as they already do.</span>
+              </div>
+              <div class="inviteacts">
+                <button class="ghost sm" onclick={copyWorkspaceLink}>{workspaceLinkCopied ? 'Copied' : 'Copy workspace link'}</button>
+              </div>
+            </section>
+          {/if}
           {#if invites.filter((i) => !i.usedAt).length}
             <section>
               <div class="lab"><b>Waiting to be accepted</b></div>

@@ -1572,6 +1572,19 @@ export function v2Routes(current: () => { workspace: Workspace; db: unknown } | 
         : null
     return c.json({ invite, token, link })
   })
+  /* Where this workspace is, for someone who already has an account in it: the
+     same link an invitation travels in, without the invitation. They add it
+     and sign in as they already can. Only a database that signs people in
+     itself can be joined this way. */
+  app.get('/workspace-link', async (c) => {
+    const { me } = await mine(c)
+    if (!me.admin) return c.json({ error: 'Only an admin can share the workspace link.' }, 403)
+    const cur = current()?.workspace
+    const k = cur?.kind === 'remote' ? theMachine().inviteKeys(cur.id) : null
+    if (!k) return c.json({ error: 'This workspace signs people in with an invitation; make one instead.' }, 400)
+    const name = (await store().settings()).name ?? cur?.name ?? 'Workspace'
+    return c.json({ link: inviteLink({ kind: 'supabase', url: k.url, anonKey: k.anonKey, name }) })
+  })
   app.delete('/invites/:id', async (c) => {
     const { me } = await mine(c)
     if (!me.admin) return c.json({ error: 'Only an admin can revoke an invitation.' }, 403)
