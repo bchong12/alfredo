@@ -1,6 +1,6 @@
 {
   "name": "alfredo",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Your company brain in a database you own: board, docs, canvas and meetings, with a local MCP server for any AI agent.",
   "type": "module",
   "scripts": {
@@ -27,6 +27,7 @@
     "@electric-sql/pglite-pgvector": "^0.0.9",
     "@huggingface/transformers": "^4.3.0",
     "@xterm/headless": "^6.0.0",
+    "electron-updater": "^6.8.9",
     "node-pty": "^1.1.0",
     "onnxruntime-node": "^1.30.0"
   },
@@ -68,6 +69,13 @@
   "build": {
     "appId": "design.purist.alfredo",
     "productName": "Alfredo",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "bchong12",
+        "repo": "alfredo"
+      }
+    ],
     "asar": false,
     "directories": {
       "output": "dist-app"
@@ -96,7 +104,10 @@
       "entitlements": "desktop/entitlements.mac.plist",
       "entitlementsInherit": "desktop/entitlements.mac.plist",
       "extraResources": [
-        { "from": "dist-helper/alfredo-audio", "to": "bin/alfredo-audio" }
+        {
+          "from": "dist-helper/alfredo-audio",
+          "to": "bin/alfredo-audio"
+        }
       ],
       "extendInfo": {
         "NSMicrophoneUsageDescription": "Alfredo records meetings and dictation on this Mac."

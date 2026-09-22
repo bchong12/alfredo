@@ -3,7 +3,7 @@
 // packaged, it serves the built files itself. macOS, Windows and Linux differ
 // in two small ways here, both marked WIN below: where PATH comes from, and
 // whether closing the last window quits.
-const { app, BrowserWindow, shell, nativeTheme, screen, session, desktopCapturer, systemPreferences } = require('electron')
+const { app, BrowserWindow, ipcMain, shell, nativeTheme, screen, session, desktopCapturer, systemPreferences } = require('electron')
 const { spawn } = require('node:child_process')
 const { join } = require('node:path')
 const { existsSync } = require('node:fs')
@@ -123,7 +123,7 @@ function createWindow() {
     // Windows and Linux take the icon from the window; macOS takes it from
     // the bundle, and from the dock in development (see below).
     ...(process.platform === 'darwin' ? {} : { icon: join(__dirname, 'icon', 'icon.png') }),
-    webPreferences: { contextIsolation: true, sandbox: true },
+    webPreferences: { contextIsolation: true, sandbox: true, preload: join(__dirname, 'preload.cjs') },
   })
   win.loadURL(UI)
   // Links leave the app; the app is for Alfredo.
@@ -131,8 +131,42 @@ function createWindow() {
   win.on('closed', () => (win = null))
 }
 
+/*
+ * Updates, over the air. A packaged app asks the GitHub release page for a
+ * newer version on launch and every few hours, downloads it in the
+ * background, and tells the page; the page offers one button, and the app
+ * quits, installs and comes back. Nothing installs on its own: someone may
+ * be mid-recording. (Needs a signed build; unsigned ones cannot be replaced.)
+ */
+function setupUpdates() {
+  if (DEV || !app.isPackaged) return
+  let autoUpdater
+  try {
+    ;({ autoUpdater } = require('electron-updater'))
+  } catch {
+    return
+  }
+  autoUpdater.autoDownload = true
+  autoUpdater.autoInstallOnAppQuit = true
+  autoUpdater.on('update-downloaded', (info) => win?.webContents.send('update-ready', { version: info.version }))
+  autoUpdater.on('error', (e) => console.error(`[update] ${e?.message ?? e}`))
+  ipcMain.on('install-update', () => autoUpdater.quitAndInstall())
+  ipcMain.handle('check-update', async () => {
+    try {
+      const r = await autoUpdater.checkForUpdates()
+      return { version: r?.updateInfo?.version ?? null }
+    } catch (e) {
+      return { error: e?.message ?? String(e) }
+    }
+  })
+  const look = () => autoUpdater.checkForUpdates().catch(() => {})
+  setTimeout(look, 15_000)
+  setInterval(look, 4 * 60 * 60_000)
+}
+
 app.whenReady().then(async () => {
   ownIcon()
+  setupUpdates()
   // Every launch is a fresh page: a new build must never load from cache.
   const { session } = require('electron')
   await session.defaultSession.clearCache().catch(() => {})
