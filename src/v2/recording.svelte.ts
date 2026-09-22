@@ -129,8 +129,10 @@ export async function watchCalls() {
   callTimer = setTimeout(watchCalls, CALL_EVERY_MS)
 }
 
-/** The offer to record this call: shown until taken or waved away. */
-export const offerToRecord = () => !!rec.call && !recordingNow() && rec.call.since !== wavedAway
+/** The offer to record this call: shown until taken or waved away. A call the
+ *  machine could not name is only the microphone being open somewhere, which
+ *  dictation does too; that one is offered once it has lasted a while. */
+export const offerToRecord = () => !!rec.call && !recordingNow() && rec.call.since !== wavedAway && (rec.call.known || Date.now() - rec.call.since > 90_000)
 export function waveAway() {
   if (rec.call) wavedAway = rec.call.since
 }
