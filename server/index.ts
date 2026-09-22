@@ -79,6 +79,7 @@ if (!PUBLIC && process.env.ALFRED_LOCAL_BRAIN !== '0') {
 
 if (!PUBLIC) {
   audio.prepare()
+  composio.warm()
   console.log(`recording: ${audio.nativeAvailable() ? 'system audio + mic (alfredo-audio)' : 'microphone via ffmpeg (build native/alfredo-audio for system audio)'}`)
 }
 

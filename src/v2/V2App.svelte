@@ -9,7 +9,7 @@
   import Search from './Search.svelte'
   import AddWorkspace from './AddWorkspace.svelte'
   import Recorder from './Recorder.svelte'
-  import { sync as syncRecording } from './recording.svelte'
+  import { sync as syncRecording, watchCalls } from './recording.svelte'
   import BoardTab from './BoardTab.svelte'
   import DocsTab from './DocsTab.svelte'
   import CanvasTab from './CanvasTab.svelte'
@@ -68,7 +68,7 @@
     const who = email
     // untrack: loading reads the state it also writes (settings, projects),
     // and a tracked read there would re-run this effect off its own writes.
-    if (id && ok) untrack(() => (loadWorkspaceState(who), syncRecording()))
+    if (id && ok) untrack(() => (loadWorkspaceState(who), workspace.hosted || (syncRecording(), watchCalls())))
     else if (id && needsLogin) {
       // Nothing of the previous workspace stays on screen while this one asks who you are.
       ui.settings = null

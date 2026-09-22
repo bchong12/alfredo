@@ -42,8 +42,14 @@ export const isRecording = () => current !== null
  * What a recording here would pick up, so the app can say it before anyone
  * records a meeting and finds out afterwards that half of it is missing.
  */
-export async function hearing(): Promise<{ can: boolean; both: boolean; why: string }> {
-  if (nativeAvailable()) return { can: true, both: true, why: 'the room and the call' }
+export async function hearing(): Promise<{ can: boolean; both: boolean; why: string; fix?: 'screen' }> {
+  if (nativeAvailable()) {
+    // The helper hears the call through the screen's audio, which macOS only
+    // hands over once the person has said so in System Settings.
+    const p = await probe().catch(() => null)
+    if (p && !p.screen) return { can: true, both: false, why: 'your microphone only, until Alfredo may record what the screen plays', fix: 'screen' }
+    return { can: true, both: true, why: 'the room and the call' }
+  }
   if (!(await ffmpegAvailable()))
     return {
       can: false,
@@ -63,6 +69,39 @@ export async function hearing(): Promise<{ can: boolean; both: boolean; why: str
   return { can: true, both: false, why: 'your microphone only. Linux has no loopback Alfredo can open on its own; route your call into a PulseAudio monitor source to include it' }
 }
 export const nativeAvailable = () => existsSync(HELPER)
+
+/** What the helper can see without asking anyone anything (see main.swift, probe). */
+export type Probe = { micInUse: boolean; screen: boolean; calls: { app: string; title: string }[] }
+let lastProbe: { at: number; value: Probe } | null = null
+export function probe(): Promise<Probe> {
+  if (lastProbe && Date.now() - lastProbe.at < 4000) return Promise.resolve(lastProbe.value)
+  return new Promise((resolve, reject) => {
+    if (!nativeAvailable()) return reject(new Error('no helper'))
+    const p = spawn(HELPER, ['probe'], { stdio: ['ignore', 'pipe', 'ignore'] })
+    let out = ''
+    p.stdout!.on('data', (d) => (out += d))
+    const t = setTimeout(() => p.kill(), 5000)
+    p.on('error', reject)
+    p.on('close', () => {
+      clearTimeout(t)
+      try {
+        const value = JSON.parse(out.trim().split('\n').pop() ?? '') as Probe
+        lastProbe = { at: Date.now(), value }
+        resolve(value)
+      } catch (e) {
+        reject(e)
+      }
+    })
+  })
+}
+
+/** Ask macOS for the screen's audio: the system prompt if it has not been
+ *  answered, and the Settings pane either way, since a refusal only lives there. */
+export function askForScreen() {
+  if (nativeAvailable()) spawn(HELPER, ['check'], { stdio: 'ignore' }).on('error', () => {})
+  spawn('open', ['x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture'], { stdio: 'ignore' }).on('error', () => {})
+  lastProbe = null
+}
 /** Call once at boot so the first recording does not wait on a device scan. */
 export const prepare = () => resolveMic().catch(() => {})
 export function currentRecording() {

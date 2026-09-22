@@ -62,16 +62,48 @@ export function whatWentWrong(out: string, fallback: string): string {
 }
 
 /** Run a composio command in a pseudo-terminal and return what it printed. */
-export function runComposio(args: string[], timeoutMs = 20_000): Promise<{ out: string; code: number }> {
-  return new Promise((resolve) => {
-    const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(CLAUDE|AI_AGENT)/.test(k)))
-    const p = spawn(SHELL, ['-lic', `composio ${args.map(q).join(' ')}`], {
-      name: 'xterm-256color',
-      cols: 160,
-      rows: 40,
-      cwd: homedir(),
-      env: { ...env, TERM: 'xterm-256color', NO_COLOR: '1' },
+/**
+ * Where the CLI is, and the PATH a terminal would give it. Found once through a
+ * login shell (the only thing that knows the person's PATH), then every run
+ * starts the binary itself: a login shell reads the whole profile each time,
+ * which was most of the wait on every Composio call.
+ */
+let found: Promise<{ bin: string | null; path: string }> | null = null
+function whereIsComposio() {
+  if (found) return found
+  found = new Promise((resolve) => {
+    const p = spawn(SHELL, ['-lic', 'command -v composio; echo "PATH=$PATH"'], { name: 'xterm-256color', cols: 200, rows: 10, cwd: homedir(), env: { ...process.env, TERM: 'xterm-256color' } })
+    let out = ''
+    p.onData((d) => (out += d))
+    const t = setTimeout(() => {
+      try {
+        p.kill()
+      } catch {}
+    }, 15_000)
+    p.onExit(() => {
+      clearTimeout(t)
+      const text = strip(out)
+      const bin = text.split('\n').map((l) => l.trim()).find((l) => /^\/.*composio$/.test(l)) ?? null
+      const path = /PATH=([^\r\n]+)/.exec(text)?.[1] ?? process.env.PATH ?? ''
+      resolve({ bin, path })
     })
+  })
+  return found
+}
+
+export function runComposio(args: string[], timeoutMs = 20_000): Promise<{ out: string; code: number }> {
+  return new Promise(async (resolve) => {
+    const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(CLAUDE|AI_AGENT)/.test(k)))
+    const where = await whereIsComposio()
+    const p = where.bin
+      ? spawn(where.bin, args, { name: 'xterm-256color', cols: 160, rows: 40, cwd: homedir(), env: { ...env, PATH: where.path, TERM: 'xterm-256color', NO_COLOR: '1' } })
+      : spawn(SHELL, ['-lic', `composio ${args.map(q).join(' ')}`], {
+          name: 'xterm-256color',
+          cols: 160,
+          rows: 40,
+          cwd: homedir(),
+          env: { ...env, TERM: 'xterm-256color', NO_COLOR: '1' },
+        })
     let out = ''
     p.onData((d) => (out += d))
     const t = setTimeout(() => {
@@ -241,6 +273,12 @@ async function look(): Promise<Snapshot> {
  * What the panel draws. Nothing here ever waits on the CLI: a known answer
  * comes back at once, and a first visit gets an empty one that fills in.
  */
+/** Called once at boot: have the answer ready before anyone opens the panel. */
+export function warm() {
+  if (!installed()) return
+  setTimeout(() => void snapshot().catch(() => {}), 3000)
+}
+
 export async function snapshot(force = false): Promise<Snapshot> {
   const have = memo ?? fromDisk()
   if (have) memo = have

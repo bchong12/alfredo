@@ -13,6 +13,7 @@
 // what the transcriber wants.
 
 import AVFoundation
+import CoreAudio
 import CoreGraphics
 import Foundation
 import ScreenCaptureKit
@@ -81,6 +82,45 @@ final class Down {
 
 if args[1] == "check" {
   if CGPreflightScreenCaptureAccess() { print("ok") } else { CGRequestScreenCaptureAccess(); print("asked") }
+  exit(0)
+}
+
+// --- probe: is a call going on? ----------------------------------------------------------
+//
+// Asks nothing of the person. The microphone being open in some other process
+// is what a call looks like from here; the window list says which app, when
+// Alfredo may read window names (the same permission as recording the call).
+if args[1] == "probe" {
+  var micInUse = false
+  var addr = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultInputDevice, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+  var dev = AudioDeviceID(0)
+  var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+  if AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size, &dev) == noErr, dev != 0 {
+    var running: UInt32 = 0
+    var rsize = UInt32(MemoryLayout<UInt32>.size)
+    var raddr = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyDeviceIsRunningSomewhere, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+    if AudioObjectGetPropertyData(dev, &raddr, 0, nil, &rsize, &running) == noErr { micInUse = running != 0 }
+  }
+  let screen = CGPreflightScreenCaptureAccess()
+  var calls: [[String: String]] = []
+  if let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] {
+    for w in list {
+      let owner = w[kCGWindowOwnerName as String] as? String ?? ""
+      let name = w[kCGWindowName as String] as? String ?? ""
+      let text = owner + " " + name
+      var what: String? = nil
+      if name.range(of: #"(^|\s)Meet\s[-–—]|Google Meet|meet\.google\.com"#, options: .regularExpression) != nil { what = "Google Meet" }
+      else if owner == "zoom.us" || name.contains("Zoom Meeting") || name.contains("Zoom Webinar") { what = "Zoom" }
+      else if owner.contains("Microsoft Teams") || name.contains("Microsoft Teams") { what = "Microsoft Teams" }
+      else if owner == "FaceTime" { what = "FaceTime" }
+      else if name.contains("Huddle") && (owner == "Slack" || name.contains("Slack")) { what = "a Slack huddle" }
+      else if name.contains("Webex") { what = "Webex" }
+      else if name.contains("Discord") && name.contains("Voice") { what = "Discord" }
+      if let what = what, !calls.contains(where: { $0["app"] == what }) { calls.append(["app": what, "title": String(text.prefix(80))]) }
+    }
+  }
+  let json: [String: Any] = ["micInUse": micInUse, "screen": screen, "calls": calls]
+  if let data = try? JSONSerialization.data(withJSONObject: json), let text = String(data: data, encoding: .utf8) { print(text) }
   exit(0)
 }
 

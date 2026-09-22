@@ -26,7 +26,7 @@
   let meetings = $state<MeetingSummary[]>(peek<MeetingSummary[]>('/meetings') ?? [])
   let loading = $state(!peek('/meetings'))
   type Install = { state: 'idle' | 'running' | 'done' | 'failed'; log: string }
-  type Hears = { can: boolean; both: boolean; why: string }
+  type Hears = { can: boolean; both: boolean; why: string; fix?: 'screen' }
   type Onnx = { state: 'idle' | 'downloading' | 'ready' | 'failed'; got: number; of: number; error?: string }
   let engine = $state<{ parakeet: boolean; recording: boolean; install: Install; canRecord?: boolean; localTranscription?: boolean; engine?: string | null; onnx?: Onnx; hears?: Hears } | null>(null)
   type Upcoming = { connected: boolean; accounts?: number; calendars?: string[]; checking?: boolean; events: Event[] }
@@ -58,6 +58,12 @@
   /* Recording needs a microphone and a model on a disk, and the calendar comes
      through a CLI: on the site a meeting is its notes, written or pasted. */
   const onAMachine = !workspace.hosted
+  /** Asks macOS for the screen's audio, then looks again once it may have been given. */
+  async function allowScreen() {
+    await v2.post('/transcribe/permissions/screen', {}).catch(() => {})
+    setTimeout(checkEngine, 4000)
+    setTimeout(checkEngine, 15000)
+  }
   if (onAMachine) checkEngine()
   async function download() {
     try {
@@ -277,8 +283,9 @@
             <div class="mi"><Cpu size={17} /></div>
             <div class="mt">
               <span class="h">This machine hears one side of a call</span>
-              <span class="s">Recording picks up {engine.hears.why}.</span>
+              <span class="s">Recording picks up {engine.hears.why}.{#if engine.hears.fix === 'screen'} macOS calls it Screen & System Audio Recording, under Privacy & Security; turn Alfredo on there and it hears the call.{/if}</span>
             </div>
+            {#if engine.hears.fix === 'screen'}<button class="primary sm" onclick={allowScreen}>Allow</button>{/if}
           </div>
         {/if}
         {#if engine && engine.canRecord === false}

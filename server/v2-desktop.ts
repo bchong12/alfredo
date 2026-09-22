@@ -91,8 +91,42 @@ async function finish(job: Job, st: Store, path: string, durationS: number, star
 // --- the calendar: every account a workspace uses, as one list ----------------
 
 type CalendarAnswer = { connected: boolean; accounts?: number; calendars: string[]; events: unknown[]; error: string | null }
-const calendars = new Map<string, { at: number; answer: CalendarAnswer }>()
+const calendars = new Map<string, { at: number; answer: CalendarAnswer; aliases: string[] }>()
 const looking = new Map<string, Promise<void>>()
+
+/* What was found last is kept on disk, so the first look after the app opens
+   is as quick as any other, and looked at again on a clock while the app is
+   open, so nobody sits on "Checking your calendar": every account is a CLI
+   run of a few seconds, and that can happen behind the page. */
+const CALENDAR_FILE = join(appHome(), 'cache', 'calendar.json')
+const CALENDAR_FRESH_MS = 3 * 60_000
+try {
+  if (existsSync(CALENDAR_FILE)) for (const [k, v] of Object.entries(JSON.parse(readFileSync(CALENDAR_FILE, 'utf8')) as Record<string, { at: number; answer: CalendarAnswer; aliases: string[] }>)) calendars.set(k, v)
+} catch {}
+function keepCalendars() {
+  try {
+    mkdirSync(dirname(CALENDAR_FILE), { recursive: true })
+    writeFileSync(CALENDAR_FILE, JSON.stringify(Object.fromEntries(calendars)))
+  } catch {}
+}
+function lookAgain(key: string, aliases: string[]) {
+  if (looking.has(key)) return looking.get(key)!
+  const look = lookAtCalendars(aliases)
+    .then((answer) => {
+      calendars.set(key, { at: Date.now(), answer, aliases })
+      keepCalendars()
+    })
+    .catch(() => {})
+    .finally(() => looking.delete(key))
+  looking.set(key, look)
+  return look
+}
+// Every calendar looked at in the last hour is looked at again before it goes stale.
+setInterval(() => {
+  for (const [key, kept] of calendars) {
+    if (Date.now() - kept.at > CALENDAR_FRESH_MS - 20_000 && Date.now() - kept.at < 60 * 60_000) void lookAgain(key, kept.aliases)
+  }
+}, 30_000).unref()
 
 async function lookAtCalendars(aliases: string[]): Promise<CalendarAnswer> {
   const ask = async (alias: string | null) => {
@@ -214,6 +248,22 @@ function routes(app: Hono, { store, current, mine, projectOf, mapOf, NO_PROJECT 
   // Recording and Parakeet are the one part of Alfredo that needs a Mac: system
   // audio comes from ScreenCaptureKit and Parakeet runs on Apple silicon. The
   // app says so rather than offering a download that cannot work.
+  /* Is a call going on? Asked by the app every few seconds so it can offer to
+     record one that has started, and to stop when the one being recorded ends.
+     A call is a window that says so (Meet, Zoom, Teams, FaceTime, a huddle),
+     or, when nothing is being recorded here, the microphone open elsewhere. */
+  app.get('/transcribe/call', async (c) => {
+    const p = await audio.probe().catch(() => null)
+    if (!p) return c.json({ inCall: false, app: null, screen: false, known: false })
+    const named = p.calls[0]?.app ?? null
+    const inCall = !!named || (p.micInUse && !audio.isRecording())
+    return c.json({ inCall, app: named ?? (inCall ? 'A call' : null), screen: p.screen, known: !!named })
+  })
+  app.post('/transcribe/permissions/screen', (c) => {
+    audio.askForScreen()
+    return c.json({ ok: true })
+  })
+
   app.get('/transcribe/engine', async (c) => {
     const hears = await audio.hearing().catch(() => ({ can: false, both: false, why: '' }))
     return c.json({
@@ -307,14 +357,8 @@ function routes(app: Hono, { store, current, mine, projectOf, mapOf, NO_PROJECT 
        "Checking your calendar" for that every time it is opened: what was
        found last is handed over at once, and looked at again behind it. */
     const kept = calendars.get(key)
-    const fresh = kept && Date.now() - kept.at < 60_000
-    if (!fresh && !looking.has(key)) {
-      const look = lookAtCalendars(aliases)
-        .then((answer) => void calendars.set(key, { at: Date.now(), answer }))
-        .catch(() => {})
-        .finally(() => looking.delete(key))
-      looking.set(key, look)
-    }
+    const fresh = kept && Date.now() - kept.at < CALENDAR_FRESH_MS
+    if (!fresh) void lookAgain(key, aliases)
     if (kept) return c.json({ ...kept.answer, checking: !fresh })
     await looking.get(key)
     return c.json(calendars.get(key)?.answer ?? { connected: false, events: [], calendars: [], error: 'Calendar unavailable' })

@@ -21,7 +21,10 @@ export type Job = {
   endedAt?: number
 }
 
-export const rec = $state<{ jobs: Job[]; title: string; ready: Job | null }>({ jobs: [], title: '', ready: null })
+export const rec = $state<{ jobs: Job[]; title: string; ready: Job | null; call: Call | null; ended: boolean }>({ jobs: [], title: '', ready: null, call: null, ended: false })
+
+/** A call the machine can see going on: the app it is in, and when it was first seen. */
+export type Call = { app: string; since: number; known: boolean }
 
 export const recordingNow = () => rec.jobs.find((j) => j.state === 'recording') ?? null
 export const writingUp = () => rec.jobs.filter((j) => j.state === 'transcribing' || j.state === 'writing')
@@ -85,4 +88,54 @@ export async function stopRecording() {
 export async function dismiss(id: string) {
   rec.jobs = rec.jobs.filter((j) => j.id !== id)
   await v2.del(`/transcribe/${id}`).catch(() => {})
+}
+
+
+// --- calls: offer to record one that starts, and to stop when it ends ----------
+//
+// The machine can tell when a call is on (a Meet, Zoom or Teams window; or
+// the microphone open in another app). Nothing starts on its own: the app
+// says what it sees and offers the one button that fits, and a call that was
+// waved away stays waved away.
+let callTimer: ReturnType<typeof setTimeout> | undefined
+let wavedAway = 0 // the `since` of the call that was declined
+let quiet = 0 // polls in a row with no call, while recording one
+const CALL_EVERY_MS = 6000
+
+export async function watchCalls() {
+  clearTimeout(callTimer)
+  const seen = await v2.get<{ inCall: boolean; app: string | null; known: boolean }>('/transcribe/call').catch(() => null)
+  if (seen) {
+    if (seen.inCall) {
+      quiet = 0
+      rec.ended = false
+      if (!rec.call) rec.call = { app: seen.app ?? 'A call', since: Date.now(), known: seen.known }
+      else if (seen.known && !rec.call.known) rec.call = { ...rec.call, app: seen.app ?? rec.call.app, known: true }
+    } else if (rec.call) {
+      // Only a call the machine could name is worth saying has ended: while
+      // recording, the microphone being open is Alfredo itself.
+      if (recordingNow() && rec.call.known) {
+        quiet++
+        if (quiet >= 3) {
+          rec.ended = true
+          rec.call = null
+        }
+      } else {
+        rec.call = null
+        quiet = 0
+      }
+    }
+  }
+  callTimer = setTimeout(watchCalls, CALL_EVERY_MS)
+}
+
+/** The offer to record this call: shown until taken or waved away. */
+export const offerToRecord = () => !!rec.call && !recordingNow() && rec.call.since !== wavedAway
+export function waveAway() {
+  if (rec.call) wavedAway = rec.call.since
+}
+export async function recordThisCall() {
+  const app = rec.call?.app ?? ''
+  const ok = await startRecording(app && app !== 'A call' ? `${app} call` : '')
+  if (ok) rec.ended = false
 }

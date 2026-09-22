@@ -29,8 +29,10 @@ export function workspaceFolder(): string {
 /** The recorder helper, under its current name or the one it was built with. */
 export function audioHelper(): string {
   // One you built yourself wins; otherwise the one the packaged app ships.
-  // (An empty file is a build made without Swift: no helper.)
-  const shipped = process.env.ALFREDO_RESOURCES ? join(process.env.ALFREDO_RESOURCES, 'bin', 'alfredo-audio') : ''
+  // The one this build ships comes first: it is the one this code was written
+  // against. (An empty file is a build made without Swift: no helper.) Then
+  // one built by hand into the app's home, under either name it has had.
+  const shipped = process.env.ALFREDO_RESOURCES ? join(process.env.ALFREDO_RESOURCES, 'bin', 'alfredo-audio') : join(process.cwd(), 'dist-helper', 'alfredo-audio')
   const real = (p: string) => existsSync(p) && statSync(p).size > 0
-  return [join(appHome(), 'bin', 'alfredo-audio'), join(appHome(), 'bin', 'alfred-audio'), shipped].find(real) ?? join(appHome(), 'bin', 'alfredo-audio')
+  return [shipped, join(appHome(), 'bin', 'alfredo-audio'), join(appHome(), 'bin', 'alfred-audio')].find(real) ?? join(appHome(), 'bin', 'alfredo-audio')
 }

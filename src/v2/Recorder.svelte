@@ -3,7 +3,7 @@
   // meeting can be stopped from the board, and what it becomes is announced
   // where you are rather than holding a page hostage while it is written.
   import X from '@lucide/svelte/icons/x'
-  import { rec, recordingNow, writingUp, stopRecording } from './recording.svelte'
+  import { rec, recordingNow, writingUp, stopRecording, offerToRecord, waveAway, recordThisCall } from './recording.svelte'
   import { go, visibleTabs } from './state.svelte'
 
   let now = $state(Date.now())
@@ -30,7 +30,15 @@
   })
 </script>
 
-{#if recordingNow()}
+{#if recordingNow() && rec.ended}
+  {@const job = recordingNow()!}
+  <!-- The call this recording was for has ended: one button to finish it. -->
+  <div class="pill">
+    <span class="name">The call has ended. Stop and write “{rec.title || job.title || 'Meeting'}” up?</span>
+    <button class="stop" onclick={stopRecording}><i></i>Stop</button>
+    <button class="x" aria-label="Keep recording" title="Keep recording" onclick={() => (rec.ended = false)}><X size={13} /></button>
+  </div>
+{:else if recordingNow()}
   {@const job = recordingNow()!}
   <div class="pill">
     <button class="what" onclick={() => meetingsTab() && go(meetingsTab()!)} title="Go to the meeting">
@@ -39,6 +47,12 @@
       <span class="t">{clock(now - job.startedAt)}</span>
     </button>
     <button class="stop" onclick={stopRecording}><i></i>Stop</button>
+  </div>
+{:else if offerToRecord()}
+  <div class="pill">
+    <span class="name">{rec.call!.app === 'A call' ? 'Something is using the microphone' : `${rec.call!.app} is running`}. Transcribe it?</span>
+    <button class="rec" onclick={recordThisCall}><i class="dot"></i>Transcribe</button>
+    <button class="x" aria-label="Not this one" title="Not this one" onclick={waveAway}><X size={13} /></button>
   </div>
 {:else if rec.ready}
   <div class="pill quiet">
@@ -134,6 +148,28 @@
     height: 9px;
     border-radius: 2px;
     background: #fff;
+  }
+  .rec {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 32px;
+    padding: 0 13px;
+    flex: none;
+    border-radius: 8px;
+    background: var(--ink);
+    color: var(--bg);
+    border: 0;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .rec .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #e5484d;
   }
   .open {
     height: 26px;
