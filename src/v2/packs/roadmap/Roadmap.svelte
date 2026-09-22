@@ -103,8 +103,8 @@
             source: before,
             target: step.id,
             deletable: editable,
-            style: `stroke:${done ? '#2b2b2b' : '#4a4a4a'};stroke-width:1.5px`,
-            markerEnd: { type: MarkerType.ArrowClosed, color: done ? '#2b2b2b' : '#4a4a4a', width: 16, height: 16 },
+            style: `stroke:${done ? 'var(--line)' : 'var(--muted)'};stroke-width:1.5px`,
+            markerEnd: { type: MarkerType.ArrowClosed, color: done ? 'var(--line)' : 'var(--muted)', width: 16, height: 16 },
           } as Edge
         }),
       ),
@@ -121,7 +121,7 @@
                 target: held,
                 targetHandle: 'top',
                 deletable: editable,
-                style: 'stroke:#4a4a4a;stroke-width:1.5px;stroke-dasharray:3 4',
+                style: 'stroke:var(--muted);stroke-width:1.5px;stroke-dasharray:3 4',
               }) as Edge,
           ),
         ),
@@ -235,7 +235,7 @@
         proOptions={{ hideAttribution: true }}
       >
         <FlowApi onready={(api) => ((flow = api), setTimeout(fit, 60))} />
-        <Background variant={BackgroundVariant.Dots} gap={22} size={1} bgColor="#0f0f0f" patternColor="#1c1c1c" />
+        <Background variant={BackgroundVariant.Dots} gap={22} size={1} bgColor="var(--panel)" patternColor="var(--line)" />
       </SvelteFlow>
 
       <!-- The morning's answer, kept out of the way of the map. -->
@@ -410,8 +410,8 @@
     min-height: 0;
   }
   .flowhost :global(.svelte-flow) {
-    --xy-selection-background-color: rgba(237, 237, 237, 0.05);
-    --xy-selection-border: 1px solid rgba(237, 237, 237, 0.4);
+    --xy-selection-background-color: var(--accent-soft);
+    --xy-selection-border: 1px solid var(--line-strong);
   }
   .flowhost :global(.svelte-flow__node) {
     background: none;
@@ -426,8 +426,8 @@
   .flowhost :global(.svelte-flow__handle) {
     width: 8px;
     height: 8px;
-    background: #0f0f0f;
-    border: 1.5px solid #6b6b6b;
+    background: var(--panel);
+    border: 1.5px solid var(--muted);
     opacity: 0;
   }
   .flowhost :global(.svelte-flow__handle.quiet) {
@@ -564,7 +564,7 @@
     border-radius: 12px;
     background: var(--raised);
     border: 1px solid var(--line-strong);
-    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+    box-shadow: var(--shadow-md);
     z-index: 5;
   }
   .tool {
@@ -593,7 +593,7 @@
   .div {
     width: 1px;
     height: 20px;
-    background: #2e2e2e;
+    background: var(--line-strong);
     margin: 0 2px;
   }
 
@@ -619,7 +619,7 @@
     background: var(--panel);
     border: 1px solid var(--line-strong);
     border-radius: 12px;
-    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6);
+    box-shadow: var(--shadow-md);
   }
   .head {
     display: flex;

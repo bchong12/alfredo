@@ -9,9 +9,12 @@ on:
         description: The tag to build and publish
         required: true
 
-# Somewhere for a teammate to download Alfredo from. Each platform builds its
-# own app, because npm only installs the native pieces for the machine doing
-# the installing, and the three land on one release.
+# Somewhere for a teammate to download Alfredo from. Windows and Linux build
+# here, because npm only installs the native pieces for the machine doing the
+# installing. The Mac build is not made here: it has to be signed with a
+# Developer ID and notarized, which `npm run release:mac` does on a Mac that
+# has the certificate, and its dmg and zip are then uploaded to the same
+# release with `gh release upload <tag> dist-app/Alfredo-*.dmg dist-app/Alfredo-*-mac.zip`.
 permissions:
   contents: write
 
@@ -22,7 +25,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest, ubuntu-latest]
+        os: [windows-latest, ubuntu-latest]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -51,15 +54,8 @@ jobs:
           New-Item -ItemType Directory -Force -Path dist-app\helper | Out-Null
           Move-Item alfredo-audio.exe dist-app\helper\alfredo-audio.exe
 
-      - name: The system-audio helper (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          mkdir -p dist-app/helper
-          swiftc -O -o dist-app/helper/alfredo-audio native/alfredo-audio/main.swift \
-            -framework ScreenCaptureKit -framework AVFoundation -framework CoreMedia -framework CoreGraphics
-
       - name: Package
-        run: npm run desktop:build:${{ runner.os == 'Windows' && 'win' || runner.os == 'Linux' && 'linux' || 'mac' }}
+        run: npm run desktop:build:${{ runner.os == 'Windows' && 'win' || 'linux' }}
 
       - name: Zip it
         shell: bash
@@ -67,7 +63,6 @@ jobs:
           tag="${{ inputs.tag || github.ref_name }}"
           cd dist-app
           case "${{ runner.os }}" in
-            macOS)   src=mac-arm64;    name="alfredo-$tag-macos-arm64" ;;
             Windows) src=win-unpacked; name="alfredo-$tag-windows-x64" ;;
             Linux)   src=linux-unpacked; name="alfredo-$tag-linux-x64" ;;
           esac
@@ -109,23 +104,17 @@ jobs:
 
           | | |
           | --- | --- |
-          | macOS, Apple silicon | `*-macos-arm64.zip` |
+          | macOS, Apple silicon | `Alfredo-*-arm64.dmg` (drag it into Applications) |
           | Windows, 64-bit | `*-windows-x64.zip` |
           | Linux, 64-bit | `*-linux-x64.tar.gz` |
 
-          Unzip it and run Alfredo. On first launch it asks where your first workspace
-          should live; if someone sent you an invite, choose **Add workspace**, then
-          **I have an invite**, and paste their link.
+          On first launch Alfredo asks where your first workspace should live; if
+          someone sent you an invite, choose **Add workspace**, then **I have an
+          invite**, and paste their link.
 
-          **These builds are not code-signed.** macOS will refuse a downloaded app it
-          cannot check, so after unzipping, run this once:
-
-          ```sh
-          xattr -dr com.apple.quarantine /Applications/Alfredo.app
-          ```
-
-          Windows SmartScreen will warn for the same reason: **More info**, then **Run
-          anyway**. Or build it yourself, which is three commands and no warnings:
+          The Mac app is signed and notarized. The Windows build is not code-signed
+          yet, so SmartScreen asks once: **More info**, then **Run anyway**. Or build
+          it yourself, which is three commands and no warnings:
           `npm ci && npm run build && npm run desktop:install`.
           NOTE
           )

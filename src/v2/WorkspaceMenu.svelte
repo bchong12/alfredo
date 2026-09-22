@@ -30,7 +30,7 @@
     </button>
   {/each}
   <div class="sep"></div>
-  <button class="item act" role="menuitem" onclick={onadd}><span class="ico"><Plus size={14} /></span>Add workspace</button>
+  {#if !workspace.hosted}<button class="item act" role="menuitem" onclick={onadd}><span class="ico"><Plus size={14} /></span>Add workspace</button>{/if}
   <button class="item act" role="menuitem" onclick={() => openSettings('general')}><span class="ico"><Settings size={14} /></span>Workspace settings</button>
 </div>
 
@@ -77,7 +77,7 @@
   }
   .item:hover,
   .item.on {
-    background: #222;
+    background: var(--raised);
     color: var(--ink);
   }
   .meta {

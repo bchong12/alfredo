@@ -11,7 +11,7 @@
   )
 </script>
 
-<NodeResizer isVisible={selected} minWidth={80} minHeight={60} keepAspectRatio lineStyle="border-color:#ededed" handleStyle="background:#ededed;border:0" />
+<NodeResizer isVisible={selected} minWidth={80} minHeight={60} keepAspectRatio lineStyle="border-color:var(--ink)" handleStyle="background:var(--ink);border:0" />
 <Handles />
 <div class="img" class:sel={selected}>
   {#if src}<img {src} alt={d.title ?? ''} draggable="false" />{/if}
@@ -23,11 +23,11 @@
     height: 100%;
     border-radius: 8px;
     overflow: hidden;
-    border: 1px solid #2a2a2a;
-    background: #141414;
+    border: 1px solid var(--line-strong);
+    background: var(--raised);
   }
   .sel {
-    outline: 1.5px solid #ededed;
+    outline: 1.5px solid var(--ink);
     outline-offset: 4px;
   }
   img {

@@ -16,6 +16,7 @@
   import Link from '@lucide/svelte/icons/link'
   import FileText from '@lucide/svelte/icons/file-text'
   import { linkForMcp, type Kind } from './clip'
+  import { workspace } from '../lib/workspace.svelte'
   let {
     text,
     size = 12,
@@ -48,7 +49,8 @@
   function press(e: MouseEvent) {
     e.stopPropagation()
     e.preventDefault()
-    if (!as) return void put(text())
+    // On the site there is no MCP server to follow a link to: copy the words.
+    if (!as || workspace.hosted) return void put(text())
     open = !open
     if (!open || !button) return
     const r = button.getBoundingClientRect()
@@ -101,7 +103,7 @@
     border: 0;
     border-radius: 4px;
     background: none;
-    color: #5a5a5a;
+    color: var(--muted);
     cursor: pointer;
     flex-shrink: 0;
   }

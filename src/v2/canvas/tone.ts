@@ -1,19 +1,20 @@
-// Canvas colours. Dark ground, every object an outline in its colour over a
-// faint tint of it. Boards imported from Miro carry Miro's pale fills; each
-// maps to the outline and text colour Miro itself uses for that fill, lifted
-// so it reads on dark.
+// Canvas colours. Every object is an outline in its colour over a faint tint
+// of it, on whichever ground the theme has. Boards imported from Miro carry
+// Miro's pale fills; each maps to the outline colour Miro itself uses for that
+// fill. Text is that colour pulled toward the theme's ink, so it reads on a
+// dark ground and a light one alike.
 export const PALETTE = ['#E3D3B0', '#B4C3D3', '#B7C7AE', '#DDB6A1', '#C7BDD6', '#E8D9A0', '#D6D1C8']
 
-const MIRO: Record<string, { line: string; text: string }> = {
-  '#f1f6ff': { line: '#5c8fff', text: '#a9c3ff' },
-  '#ebfff3': { line: '#17cb61', text: '#86e3ab' },
-  '#fff9e8': { line: '#e5bd4c', text: '#f0d68c' },
-  '#f5f1ff': { line: '#aa8de2', text: '#cdbcf0' },
-  '#fff0d9': { line: '#e69b55', text: '#f2c393' },
-  '#a9e467': { line: '#7dad39', text: '#bde38c' },
-  '#ffe777': { line: '#d9b834', text: '#f0da7a' },
-  '#ffc08b': { line: '#d88132', text: '#f2b27a' },
-  '#a9e9fb': { line: '#5eb4cd', text: '#a5dbeb' },
+const MIRO: Record<string, string> = {
+  '#f1f6ff': '#5c8fff',
+  '#ebfff3': '#17cb61',
+  '#fff9e8': '#e5bd4c',
+  '#f5f1ff': '#aa8de2',
+  '#fff0d9': '#e69b55',
+  '#a9e467': '#7dad39',
+  '#ffe777': '#d9b834',
+  '#ffc08b': '#d88132',
+  '#a9e9fb': '#5eb4cd',
 }
 
 const KIND: Record<string, string> = {
@@ -36,7 +37,7 @@ function rgb(h: string) {
 export function toneOf(data: { color?: string; kind?: string }) {
   const key = data.color?.toLowerCase()
   const miro = key ? MIRO[key] : undefined
-  const line = miro?.line ?? (key && key !== '#ffffff' && key !== '#fff' && rgb(key) ? key : (KIND[data.kind ?? ''] ?? '#8a8a8a'))
+  const line = miro ?? (key && key !== '#ffffff' && key !== '#fff' && rgb(key) ? key : (KIND[data.kind ?? ''] ?? '#8a8a8a'))
   const c = rgb(line) ?? [138, 138, 138]
-  return { line, fill: `rgba(${c.join(',')},0.08)`, text: miro?.text ?? '#ededed' }
+  return { line, fill: `rgba(${c.join(',')},0.08)`, text: miro ? `color-mix(in srgb, ${line} 55%, var(--ink))` : 'var(--ink)' }
 }

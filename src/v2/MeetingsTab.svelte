@@ -14,6 +14,7 @@
   import DocEditor from '../lib/DocEditor.svelte'
   import { v2, ago, type Meeting, type MeetingSummary } from './api'
   import { ui, go, openSettings } from './state.svelte'
+  import { workspace } from '../lib/workspace.svelte'
   import Skeleton from './Skeleton.svelte'
   import { peek, load as fetchCached, put, prefetch } from './cache'
   import { rec, recordingNow, writingUp, failedJobs, startRecording, stopRecording, dismiss, onMeetingReady, sync as syncJobs } from './recording.svelte'
@@ -54,7 +55,10 @@
     engine = await v2.get<{ parakeet: boolean; recording: boolean; install: Install; canRecord?: boolean; localTranscription?: boolean; engine?: string | null; onnx?: Onnx; hears?: Hears }>('/transcribe/engine').catch(() => engine)
     if (engine?.install.state === 'running' || engine?.onnx?.state === 'downloading') setTimeout(checkEngine, 3000)
   }
-  checkEngine()
+  /* Recording needs a microphone and a model on a disk, and the calendar comes
+     through a CLI: on the site a meeting is its notes, written or pasted. */
+  const onAMachine = !workspace.hosted
+  if (onAMachine) checkEngine()
   async function download() {
     try {
       await v2.post('/transcribe/install', {})
@@ -72,7 +76,7 @@
       upcoming ??= { connected: false, events: [] }
     }
   }
-  loadUpcoming()
+  if (onAMachine) loadUpcoming()
 
   $effect(() => {
     const t = setInterval(() => (now = Date.now()), 1000)
@@ -100,7 +104,7 @@
   const stop = () => stopRecording()
   // A meeting written up while this list is on screen joins it.
   $effect(() => onMeetingReady(() => load()))
-  syncJobs()
+  if (onAMachine) syncJobs()
 
   const clock = (ms: number) => {
     const s = Math.max(0, Math.floor(ms / 1000))
@@ -263,7 +267,7 @@
     <Header crumbs={[tabName]}>
       {#if canEditHere()}
         <button class="ghost" onclick={create}><Plus size={12} /><span>New meeting</span></button>
-        <button class="primary" disabled={engine?.canRecord === false || (engine?.parakeet === false && !engine?.engine)} title={engine?.canRecord === false ? 'Recording needs a Mac' : ''} onclick={() => start()}><i class="dot"></i><span>Transcribe</span></button>
+        {#if onAMachine}<button class="primary" disabled={engine?.canRecord === false || (engine?.parakeet === false && !engine?.engine)} title={engine?.canRecord === false ? 'Recording needs a Mac' : ''} onclick={() => start()}><i class="dot"></i><span>Transcribe</span></button>{/if}
       {/if}
     </Header>
     <div class="scroll">
@@ -306,6 +310,7 @@
           </div>
         {/if}
 
+        {#if onAMachine}
         <section>
           <div class="sh">
             <span>Up next</span>
@@ -336,6 +341,7 @@
             {/each}
           {/if}
         </section>
+        {/if}
 
         <section>
           <div class="sh"><span>Meetings</span></div>
@@ -367,8 +373,9 @@
               {#each [0, 1, 2] as _}<div class="row sk"><Skeleton w={32} h={30} r={6} /><div class="rt"><Skeleton w="50%" h={12} /><Skeleton w="30%" h={10} /></div></div>{/each}
             {:else}
               <p class="empty">
-                {#if scope.enabled && scope.id}Nothing here yet. Meetings you record in this project land here; to move an existing one, open the project it is in (or Unfiled) and use its three dots.
-                {:else}No meetings yet.{/if}
+                {#if scope.enabled && scope.id}Nothing here yet. Meetings {onAMachine ? 'you record' : 'recorded in the desktop app'} in this project land here; to move an existing one, open the project it is in (or Unfiled) and use its three dots.
+                {:else if onAMachine}No meetings yet.
+                {:else}No meetings yet. Recording and transcribing happen in the desktop app; what it saves shows up here.{/if}
               </p>
             {/if}
           {/each}
@@ -507,7 +514,7 @@
     gap: 14px;
     padding: 12px 14px;
     border-radius: 10px;
-    border: 1px dashed #333;
+    border: 1px dashed var(--line-strong);
     font-size: 13px;
     color: var(--ink-2);
   }

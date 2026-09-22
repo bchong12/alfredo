@@ -34,6 +34,17 @@ export function rememberInvite(ws: string, token: string) {
     localStorage.setItem(INVITE(ws), token)
   } catch {}
 }
+/** The token inside an invite link (alfredo:join:<base64url JSON>), or null. */
+export function inviteTokenIn(link: string): string | null {
+  const raw = link.replace(/^.*alfredo:join:/, '').trim()
+  try {
+    const json = atob(raw.replace(/-/g, '+').replace(/_/g, '/'))
+    const p = JSON.parse(json) as { token?: string }
+    return p.token || null
+  } catch {
+    return null
+  }
+}
 export function pendingInvite(ws: string) {
   try {
     return localStorage.getItem(INVITE(ws))
@@ -92,8 +103,15 @@ export async function loadWorkspaces() {
     const name = cfg.brand ?? 'Alfredo'
     workspace.list = [{ id: 'hosted', name, kind: 'remote', repos: [], prefix: cfg.prefix, createdAt: '' }]
     workspace.activeId = 'hosted'
+    // An invitation sent for the site arrives in the address: the same link
+    // the app takes, after a #. Kept for the sign-in screen, then dropped.
+    if (typeof location !== 'undefined' && /#alfredo:join:/.test(location.hash)) {
+      const token = inviteTokenIn(location.hash)
+      if (token) rememberInvite('hosted', token)
+      history.replaceState(null, '', location.pathname + location.search)
+    }
     // The tab says whose CRM this is, not the app's own name.
-    if (typeof document !== 'undefined') document.title = `${name} CRM`
+    if (typeof document !== 'undefined') document.title = /\bCRM$/i.test(name) ? name : `${name} CRM`
     syncPrefix()
     workspace.ready = true
     return

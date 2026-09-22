@@ -14,10 +14,11 @@
     "postinstall": "node scripts/fix-pty.mjs",
     "desktop": "electron .",
     "build:server": "esbuild server/index.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist-server/index.mjs --external:node-pty --external:@electric-sql/pglite --external:@huggingface/transformers --external:@electric-sql/pglite-pgvector --external:onnxruntime-node --external:sharp --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\"",
-    "desktop:build": "npm run build:desktop-ui && npm run build:server && electron-builder --mac --dir",
+    "desktop:build": "npm run build:desktop-ui && npm run build:server && node scripts/helper.mjs && electron-builder --mac --dir",
     "desktop:install": "npm run desktop:build && node scripts/install-app.mjs",
     "build:desktop-ui": "vite build --mode desktop",
-    "desktop:build:mac": "npm run build:desktop-ui && npm run build:server && electron-builder --mac --dir",
+    "desktop:build:mac": "npm run build:desktop-ui && npm run build:server && node scripts/helper.mjs && electron-builder --mac --dir",
+    "release:mac": "npm run build:desktop-ui && npm run build:server && node scripts/helper.mjs && node scripts/release-mac.mjs",
     "desktop:build:win": "npm run build:desktop-ui && npm run build:server && electron-builder --win --dir",
     "desktop:build:linux": "npm run build:desktop-ui && npm run build:server && electron-builder --linux --dir"
   },
@@ -90,7 +91,13 @@
       "target": [
         "dir"
       ],
-      "identity": null,
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "desktop/entitlements.mac.plist",
+      "entitlementsInherit": "desktop/entitlements.mac.plist",
+      "extraResources": [
+        { "from": "dist-helper/alfredo-audio", "to": "bin/alfredo-audio" }
+      ],
       "extendInfo": {
         "NSMicrophoneUsageDescription": "Alfredo records meetings and dictation on this Mac."
       },

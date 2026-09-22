@@ -13,7 +13,7 @@
   const parts = (s: string) => s.split(/(\*\*[^*]+\*\*)/g).map((p) => (p.startsWith('**') && p.endsWith('**') ? { b: true, t: p.slice(2, -2) } : { b: false, t: p }))
 </script>
 
-<NodeResizer isVisible={selected} minWidth={60} minHeight={30} lineStyle="border-color:#ededed" handleStyle="background:#ededed;border:0" />
+<NodeResizer isVisible={selected} minWidth={60} minHeight={30} lineStyle="border-color:var(--ink)" handleStyle="background:var(--ink);border:0" />
 <Handles />
 <div class="node {type} v-{variant} kind-{d.kind}" class:sel={selected} style:--line={tone.line} style:--fill={tone.fill} style:--text={tone.text}>
   {#if type === 'card' && variant === 'default' && d.kind && KIND_LABEL[d.kind]}<span class="kind">{KIND_LABEL[d.kind]}</span>{/if}
@@ -38,7 +38,7 @@
     font-family: inherit;
   }
   .sel {
-    outline: 1.5px solid #ededed;
+    outline: 1.5px solid var(--ink);
     outline-offset: 4px;
   }
   .kind {
@@ -46,7 +46,7 @@
     font-weight: 600;
     letter-spacing: 0.12em;
     text-transform: uppercase;
-    color: #8a8a8a;
+    color: var(--muted);
   }
   strong {
     font-size: 13px;
@@ -116,7 +116,7 @@
     border-color: transparent;
     background: none;
     padding: 6px;
-    color: #ededed;
+    color: var(--ink);
   }
   .text strong {
     font-size: 26px;
@@ -132,7 +132,7 @@
   }
   .text.v-miro-label p {
     font-size: 18px;
-    color: #8a8a8a;
+    color: var(--muted);
   }
   .text.v-miro-caption {
     padding: 0;
@@ -141,7 +141,7 @@
   .text.v-miro-caption strong {
     font-size: 13px;
     font-weight: 400;
-    color: #8a8a8a;
+    color: var(--muted);
   }
   .shape {
     align-items: center;

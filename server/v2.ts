@@ -12,24 +12,11 @@ import { currentWeek, listWeeks, localToday, endsOn as weekEnds, type Week as We
 import { formatRef, prefixFor } from '../src/lib/ref'
 import { CloudflareWorkspace, CloudflareError } from './cloudflare-workspace'
 import { markdownToTiptap, tiptapToMarkdown } from './tiptap'
-import { accountsFor, supabaseFor, type Workspace } from './workspaces'
+import type { Workspace } from './workspaces'
+import type { Shelf } from './chunk-shelf'
+import { toVector } from './vector'
+import { theMachine } from './v2-machine'
 import { inviteLink } from './invite-link'
-import { unlink } from 'node:fs/promises'
-import { randomUUID, randomBytes, createHash } from 'node:crypto'
-import { toVector, embedderState, readyEmbedder } from './embed'
-import { shelfFor, type Shelf } from './chunk-shelf'
-import { ask, findPassages, forget, indexProgress, keepReadIn, reindex, touch } from './knowledge'
-import * as audio from './audio'
-import { transcribe } from './ai-local'
-import { summarize, hasLocalChat, teamContext, type Summary } from './ai'
-import { parakeetAvailable } from './parakeet'
-import { download as onnxDownload, downloadState as onnxState, downloaded as onnxReady } from './parakeet-onnx'
-import { runComposio, whoIs } from './composio'
-import { spawn } from 'node:child_process'
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
-import { appHome } from './home'
 import { toneOf } from '../src/v2/canvas/tone'
 
 // --- shapes -----------------------------------------------------------------
@@ -207,8 +194,16 @@ export interface Store {
 // --- invitations ---------------------------------------------------------------
 
 /** The secret in an invite link. Only its hash is stored. */
-export const inviteToken = () => randomBytes(24).toString('base64url')
-export const hashToken = (t: string) => createHash('sha256').update(t).digest('hex')
+/* The Web Crypto both Node and a hosted function have, rather than Node's own:
+   this file has to run in both. Same bytes out either way, so a token hashed
+   by the desktop app is found by the site and the other way round. */
+export const inviteToken = () => {
+  const bytes = crypto.getRandomValues(new Uint8Array(24))
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
+export const hashToken = async (t: string) =>
+  Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t))), (b) => b.toString(16).padStart(2, '0')).join('')
+const randomUUID = () => crypto.randomUUID()
 
 // --- canvas thumbnails: the board itself, drawn small --------------------------
 
@@ -249,24 +244,15 @@ export function thumbnail(nodes: any[], edges: any[] = []): string | null {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${r(minX - pad)} ${r(minY - pad)} ${r(W + pad * 2)} ${r(H + pad * 2)}" preserveAspectRatio="xMidYMid meet">${out.join('')}</svg>`
 }
 
-/** Thumbnails for boards that live elsewhere, kept on this Mac by board and edit time. */
-const THUMBS = join(appHome(), 'cache', 'canvas-thumbs.json')
+/** Thumbnails for boards that live elsewhere, by board and edit time: kept on
+ *  disk where there is one (see v2-desktop.ts), otherwise for as long as this runs. */
 let thumbCache: Record<string, string | null> | null = null
 function thumbStore() {
-  if (!thumbCache) {
-    try {
-      thumbCache = existsSync(THUMBS) ? JSON.parse(readFileSync(THUMBS, 'utf8')) : {}
-    } catch {
-      thumbCache = {}
-    }
-  }
+  if (!thumbCache) thumbCache = theMachine().thumbs.read()
   return thumbCache!
 }
 function saveThumbs() {
-  try {
-    mkdirSync(dirname(THUMBS), { recursive: true })
-    writeFileSync(THUMBS, JSON.stringify(thumbCache))
-  } catch {}
+  if (thumbCache) theMachine().thumbs.write(thumbCache)
 }
 
 export class Conflict extends Error {
@@ -633,7 +619,7 @@ class SqlStore implements Store {
       }
     }
     this.chunksOnThisMac = true
-    return onThisMac(shelfFor(this.ws.id))
+    return onThisMac(theMachine().shelfFor(this.ws.id))
   }
   async putChunks(kind: ItemKind, itemId: string, rows: ChunkRow[]) {
     await this.shelved(
@@ -722,15 +708,15 @@ class SqlStore implements Store {
   async createInvite(i: { email: string; role: 'admin' | 'member'; projects: { id: string; role: ProjectRole }[] }) {
     const token = inviteToken()
     const expires = new Date(Date.now() + 14 * 86400000).toISOString()
-    await q(db.from('invites').insert({ token_hash: hashToken(token), email: i.email, role: i.role, projects: i.projects, expires_at: expires }))
-    const rows = await q<any[]>(db.from('invites').select('*').eq('token_hash', hashToken(token)).limit(1))
+    await q(db.from('invites').insert({ token_hash: (await hashToken(token)), email: i.email, role: i.role, projects: i.projects, expires_at: expires }))
+    const rows = await q<any[]>(db.from('invites').select('*').eq('token_hash', (await hashToken(token))).limit(1))
     return { invite: this.shapeInvite(rows[0]), token }
   }
   async revokeInvite(id: string) {
     await q(db.from('invites').delete().eq('id', id))
   }
   async inviteFor(token: string) {
-    const rows = await q<any[]>(db.from('invites').select('*').eq('token_hash', hashToken(token)).limit(1))
+    const rows = await q<any[]>(db.from('invites').select('*').eq('token_hash', (await hashToken(token))).limit(1))
     const r = rows[0]
     if (!r || r.used_at || Date.parse(r.expires_at) < Date.now()) return null
     return this.shapeInvite(r)
@@ -828,18 +814,20 @@ class CloudflareStore implements Store {
   }
   async invite(email: string, role: string) {
     const r = await this.api.call<{ token: string | null }>('/invites', { method: 'POST', body: { email, role: role === 'admin' ? 'editor' : role } })
-    // Some Workers run their own sign-up page; Alfredo's own Worker adds people directly.
+    // A team's own Worker may have its own sign-up page; Alfredo's Worker adds people directly.
     return { link: r.token ? `${this.api.url}/?invite=${r.token}` : null }
   }
-  async setRole() {
-    throw new Error('Roles for this workspace are changed in its Cloudflare dashboard for now.')
+  async setRole(id: string, role: string) {
+    // The Worker's owner is Alfredo's admin; everyone else there edits.
+    const live = await this.tryWorker<{ ok?: boolean }>(`/members/${id}`, { method: 'PATCH', body: { role: role === 'admin' ? 'owner' : 'editor' } })
+    if (!live) throw new Error('The Worker behind this workspace cannot change roles yet. Redeploy it with the current cloudflare/worker.mjs.')
   }
   async setAvatar(id: string, dataUrl: string) {
     const cur = await this.raw()
     await this.writeRaw({ ...cur, avatars: { ...(cur.avatars ?? {}), [id]: dataUrl } })
   }
 
-  /** Which week each task sits in. Worker tasks have no week of their own, so
+  /** Which week each task sits in. A task there has no week of its own, so
    *  Alfredo keeps the map in its settings; a task it has never placed sits in
    *  the week it was created. */
   private weekOf(t: any, map: Record<string, string>): string | null {
@@ -1098,7 +1086,7 @@ class CloudflareStore implements Store {
   chunksOnThisMac = false
   private shelf() {
     this.chunksOnThisMac = true
-    return shelfFor(this.ws.id)
+    return theMachine().shelfFor(this.ws.id)
   }
   async putChunks(kind: ItemKind, itemId: string, rows: ChunkRow[]) {
     const live = await this.tryWorker('/chunks', {
@@ -1228,7 +1216,7 @@ class CloudflareStore implements Store {
       usedAt: null,
     }
     const cur = await this.raw()
-    await this.writeRaw({ ...cur, invites: [...(cur.invites ?? []), { ...invite, tokenHash: hashToken(token) }] })
+    await this.writeRaw({ ...cur, invites: [...(cur.invites ?? []), { ...invite, tokenHash: (await hashToken(token)) }] })
     return { invite, token }
   }
   async revokeInvite(id: string) {
@@ -1238,7 +1226,7 @@ class CloudflareStore implements Store {
     await this.writeRaw({ ...cur, invites: (cur.invites ?? []).filter((i: any) => i.id !== id) })
   }
   async inviteFor(token: string) {
-    const hash = hashToken(token)
+    const hash = await hashToken(token)
     const hit = (await this.raw()).invites?.find((i: any) => i.tokenHash === hash)
     if (!hit || hit.usedAt || Date.parse(hit.expiresAt) < Date.now()) return null
     const { tokenHash: _drop, ...invite } = hit
@@ -1291,135 +1279,6 @@ export function storeFor(c: { workspace: Workspace; db: unknown } | undefined): 
   return new SqlStore(c.workspace)
 }
 
-// --- transcription: transcript only, the audio never outlives it -------------
-
-type Job = { id: string; title: string; project?: string | null; workspace?: string; state: 'recording' | 'transcribing' | 'writing' | 'done' | 'failed'; meetingId?: string; error?: string; startedAt: number; endedAt?: number }
-const jobs = new Map<string, Job>()
-let install: { state: 'idle' | 'running' | 'done' | 'failed'; log: string; startedAt?: number } = { state: 'idle', log: '' }
-
-/** The write-up as Markdown notes: what the meeting page shows and edits. */
-export function notesFrom(s: Summary): string {
-  const out: string[] = ['## Summary', s.tldr]
-  for (const sec of s.sections ?? []) out.push('', `## ${sec.heading}`, ...sec.bullets.map((b) => `- ${b}`))
-  if (s.decisions?.length) out.push('', '## Decisions', ...s.decisions.map((d) => `- ${d.what}${d.why ? ` (${d.why})` : ''}`))
-  if (s.action_items?.length)
-    out.push('', '## Action items', ...s.action_items.map((a) => `- [ ] ${a.title}${a.assignee ? ` @${a.assignee}` : ''}${a.due ? ` (due ${a.due})` : ''}`))
-  if (s.open_questions?.length) out.push('', '## Open questions', ...s.open_questions.map((q) => `- ${q.question}`))
-  return out.join('\n')
-}
-
-async function finish(job: Job, st: Store, path: string, durationS: number, startedAt: number, workspace = '') {
-  try {
-    job.state = 'transcribing'
-    const t = await transcribe(path)
-    if (!t.text.trim()) throw new Error('No speech was heard. Check Microphone (and Screen Recording) access for Alfredo in System Settings.')
-    job.state = 'writing'
-    let notes = ''
-    let title = job.title
-    // What was said is the company's own words, so the write-up is written on
-    // this Mac by Claude Code or not at all. Without it the transcript is still
-    // the meeting; a note saying where the write-up went is enough.
-    if (!hasLocalChat()) {
-      notes = '_Transcribed on this Mac. The write-up is written by Claude Code, which is not installed here; install it (`claude` on your PATH) and the next meeting gets one. The transcript is below._'
-    } else {
-      try {
-        const [set, people] = await Promise.all([st.settings(), st.members()]).catch(() => [null, []] as const)
-        const s = await summarize('', t.text, undefined, undefined, teamContext(set?.name, people.map((p) => p.name)))
-        notes = notesFrom(s)
-        if ((!title || title === 'Meeting') && s.title?.trim()) title = s.title.trim()
-      } catch (e) {
-        notes = `_The write-up could not be generated: ${(e as Error).message}_`
-      }
-    }
-    const m = await st.createMeeting({ title: title || 'Meeting', transcript: t.timed || t.text, notes, startedAt: new Date(startedAt).toISOString(), durationS: Math.round(durationS) })
-    if (job.project) await st.assign('meeting', [m.id], job.project).catch(() => {})
-    // Into the brain, the same as a meeting saved by hand: a transcript nobody
-    // can find afterwards is half a meeting.
-    touch(st, 'meeting', m.id, workspace)
-    job.meetingId = m.id
-    job.state = 'done'
-  } catch (e) {
-    job.state = 'failed'
-    job.error = (e as Error).message
-  } finally {
-    job.endedAt = Date.now()
-    // The audio exists only long enough to be transcribed.
-    await unlink(path).catch(() => {})
-  }
-}
-
-// --- the calendar: every account a workspace uses, as one list ----------------
-
-type CalendarAnswer = { connected: boolean; accounts?: number; calendars: string[]; events: unknown[]; error: string | null }
-const calendars = new Map<string, { at: number; answer: CalendarAnswer }>()
-const looking = new Map<string, Promise<void>>()
-
-async function lookAtCalendars(aliases: string[]): Promise<CalendarAnswer> {
-  const ask = async (alias: string | null) => {
-    const args = [
-      'execute',
-      'GOOGLECALENDAR_EVENTS_LIST',
-      '-d',
-      JSON.stringify({ calendarId: 'primary', timeMin: new Date().toISOString(), maxResults: 6, singleEvents: true, orderBy: 'startTime' }),
-      ...(alias ? ['--account', alias] : []),
-    ]
-    const { out } = await runComposio(args, 30_000)
-    const start = out.indexOf('{')
-    let r: any = null
-    try {
-      r = start >= 0 ? JSON.parse(out.slice(start, out.lastIndexOf('}') + 1)) : null
-    } catch {}
-    if (!r?.successful) {
-      const missing = /No active connection|link googlecalendar/i.test(r?.error ?? out)
-      return { ok: false as const, missing, error: missing ? null : ((r?.error as string | undefined) ?? 'Calendar unavailable') }
-    }
-    const items: any[] = r.data?.items ?? r.data?.response_data?.items ?? []
-    /* Whose calendar it is: the account's own address. Not the organiser's,
-       which says who called the meeting and nothing about where it was found. */
-    const calendar = alias ? (whoIs('googlecalendar', alias) ?? alias.replace(/^[a-z0-9]+_/, '')) : undefined
-    return {
-      ok: true as const,
-      calendar,
-      events: items.map((e: any) => ({
-        id: e.id,
-        title: e.summary ?? '(no title)',
-        start: e.start?.dateTime ?? e.start?.date,
-        end: e.end?.dateTime ?? e.end?.date,
-        link: e.hangoutLink ?? e.location ?? null,
-        people: (e.attendees ?? []).length,
-        account: alias ?? undefined,
-        calendar,
-      })),
-    }
-  }
-  const answers = await Promise.all((aliases.length ? aliases : [null]).map((alias) => ask(alias)))
-  const good = answers.filter((a) => a.ok)
-  if (!good.length) {
-    const first = answers[0]
-    return { connected: !(!first.ok && first.missing), calendars: [], events: [], error: !first.ok ? first.error : null }
-  }
-  /* The same meeting sits on both calendars when one invited the other. */
-  const seen = new Set<string>()
-  const events = good
-    .flatMap((a) => (a.ok ? a.events : []))
-    .sort((x, y) => String(x.start).localeCompare(String(y.start)))
-    .filter((e) => {
-      const key = `${e.title}|${e.start}`
-      if (seen.has(key)) return false
-      seen.add(key)
-      return true
-    })
-    .slice(0, 8)
-  const failed = answers.find((a) => !a.ok && !a.missing)
-  return {
-    connected: true,
-    accounts: aliases.length,
-    calendars: good.flatMap((a) => (a.ok && a.calendar ? [a.calendar] : [])),
-    events,
-    error: failed && !failed.ok ? failed.error : null,
-  }
-}
-
 // --- routes -------------------------------------------------------------------
 
 export function v2Routes(current: () => { workspace: Workspace; db: unknown } | undefined) {
@@ -1438,7 +1297,7 @@ export function v2Routes(current: () => { workspace: Workspace; db: unknown } | 
     await next()
     try {
       const cur = current()
-      if (cur && c.req.method === 'GET') keepReadIn(storeFor(cur), cur.workspace.id)
+      if (cur && c.req.method === 'GET') theMachine().keepReadIn(storeFor(cur), cur.workspace.id)
     } catch {}
   })
 
@@ -1640,56 +1499,7 @@ export function v2Routes(current: () => { workspace: Workspace; db: unknown } | 
     members: me.admin ? p.members : undefined,
   })
 
-  /**
-   * The company brain. Everything written down, in a form a question can
-   * reach, and an answer that says which piece of work it came from.
-   */
-  const learn = (kind: ItemKind, id: string) => touch(store(), kind, id, current()?.workspace.id ?? '')
-
-  app.get('/brain', async (c) => {
-    const st = store()
-    const chunks = await st.chunkCount().catch(() => 0)
-    /* Said on the Models page, so nobody wonders why a teammate's Mac knows nothing yet. */
-    return c.json({ ...embedderState(), chunks, onThisMac: (st as { chunksOnThisMac?: boolean }).chunksOnThisMac === true, progress: indexProgress(current()?.workspace.id ?? '') })
-  })
-  app.post('/brain/read', async (c) => {
-    const { me } = await mine(c)
-    if (!me.admin) return c.json({ error: 'Only an admin can read the whole workspace in.' }, 403)
-    return c.json(reindex(store(), current()?.workspace.id ?? ''))
-  })
-  app.post('/brain/model', async (c) => c.json(await readyEmbedder()))
-  /**
-   * An answer is about what is in front of you: inside a project, only that
-   * project's work is weighed. The database refuses what you may not see
-   * anyway; this keeps the answer honest for an admin, who may see it all.
-   */
-  const keepInView = async (c: any, hits: Hit[]) => {
-    const p = projectOf(c)
-    const [map, { me, allowed }, set] = await Promise.all([mapOf(store()), mine(c), store().settings()])
-    const ok = new Set(allowed.map((x) => x.id))
-    const unfiledIsMine = !set.projects?.enabled || me.admin
-    return hits.filter((h) => {
-      const inP = map[`${h.kind}:${h.itemId}`]
-      if (p === NO_PROJECT) return !inP
-      if (p) return inP === p
-      return inP ? ok.has(inP) : unfiledIsMine
-    })
-  }
-
-  app.post('/ask', async (c) => {
-    const b = await c.req.json<{ question?: string; limit?: number }>()
-    const question = (b.question ?? '').trim()
-    if (!question) return c.json({ error: 'Ask something.' }, 400)
-    const limit = Math.min(Math.max(Number(b.limit) || 14, 4), 30)
-    return c.json(await ask(store(), question, limit, (hits) => keepInView(c, hits)))
-  })
-  app.post('/ask/passages', async (c) => {
-    const b = await c.req.json<{ question?: string; limit?: number }>()
-    const question = (b.question ?? '').trim()
-    if (!question) return c.json([])
-    const limit = Math.min(Math.max(Number(b.limit) || 10, 1), 30)
-    return c.json(await keepInView(c, await findPassages(store(), question, limit)))
-  })
+  const learn = (kind: ItemKind, id: string) => theMachine().touch(store(), kind, id, current()?.workspace.id ?? '')
 
   app.get('/projects', async (c) => {
     const st = store()
@@ -1754,7 +1564,7 @@ export function v2Routes(current: () => { workspace: Workspace; db: unknown } | 
     // project with its publishable key, or the Worker a teammate signs in to.
     const cur = current()?.workspace
     const name = (await st.settings()).name ?? cur?.name ?? 'Workspace'
-    const k = cur?.kind === 'remote' ? supabaseFor(cur.id) : null
+    const k = cur?.kind === 'remote' ? theMachine().inviteKeys(cur.id) : null
     const link = k
       ? inviteLink({ kind: 'supabase', url: k.url, anonKey: k.anonKey, name, token })
       : cur?.kind === 'cloudflare' && cur.cloudflare?.url
@@ -1767,6 +1577,22 @@ export function v2Routes(current: () => { workspace: Workspace; db: unknown } | 
     if (!me.admin) return c.json({ error: 'Only an admin can revoke an invitation.' }, 403)
     await store().revokeInvite(c.req.param('id'))
     return c.json({ ok: true })
+  })
+  /* Spending an invitation from the hosted site, where there is no app to do
+     it: whoever is signed in becomes the person the invitation names. The
+     desktop app does the same through the database's own function. */
+  app.post('/invites/claim', async (c) => {
+    const person = (c as any).get?.('person') as { id?: string; email?: string; name?: string } | undefined
+    if (!person?.email) return c.json({ error: 'Sign in first.' }, 401)
+    const b = await c.req.json<{ token?: string; name?: string }>()
+    if (!b.token) return c.json({ error: 'No invitation to accept.' }, 400)
+    try {
+      const me = await store().acceptInvite(b.token, { name: b.name?.trim() || person.name || person.email.split('@')[0], email: person.email, userId: person.id ?? null })
+      whoCache.clear()
+      return c.json(me)
+    } catch (e) {
+      return c.json({ error: (e as Error).message }, 400)
+    }
   })
 
   app.post('/projects/assign', async (c) => {
@@ -1884,7 +1710,7 @@ export function v2Routes(current: () => { workspace: Workspace; db: unknown } | 
     const denied = await guardWrite(c, 'card', c.req.param('id'))
     if (denied) return denied
     await store().deleteCard(c.req.param('id'))
-    await forget(store(), 'card', c.req.param('id'))
+    await theMachine().forget(store(), 'card', c.req.param('id'))
     return c.json({ ok: true })
   })
 
@@ -1949,128 +1775,15 @@ export function v2Routes(current: () => { workspace: Workspace; db: unknown } | 
       const denied = await guardWrite(c, single, c.req.param('id'))
       if (denied) return denied
       await store().remove(kind, c.req.param('id'))
-      await forget(store(), single, c.req.param('id'))
+      await theMachine().forget(store(), single, c.req.param('id'))
       return c.json({ ok: true })
     })
   }
 
-  // Recording and Parakeet are the one part of Alfredo that needs a Mac: system
-  // audio comes from ScreenCaptureKit and Parakeet runs on Apple silicon. The
-  // app says so rather than offering a download that cannot work.
-  app.get('/transcribe/engine', async (c) => {
-    const hears = await audio.hearing().catch(() => ({ can: false, both: false, why: '' }))
-    return c.json({
-      parakeet: parakeetAvailable(),
-      recording: audio.isRecording(),
-      install,
-      // Whether this machine can record at all, and whether Parakeet could
-      // transcribe it here. They are separate questions with separate answers.
-      canRecord: hears.can,
-      localTranscription: true,
-      // FluidAudio on Apple silicon, ONNX Runtime everywhere else, same model.
-      engine: parakeetAvailable() ? 'fluidaudio' : onnxReady() ? 'onnx' : null,
-      onnx: onnxState(),
-      hears,
-    })
-  })
-  /* Parakeet, downloaded and built once on this Mac. The script ships with
-   * the app; it needs Xcode's command line tools. */
-  app.post('/transcribe/install', (c) => {
-    // Off Apple silicon the same model comes as ONNX, which is a download
-    // rather than a build, so there is nothing to compile and nothing to
-    // apologise for.
-    if (process.platform !== 'darwin') {
-      onnxDownload().catch(() => {})
-      return c.json({ ok: true, onnx: onnxState() })
-    }
-    if (parakeetAvailable()) return c.json({ ok: true, install })
-    if (install.state === 'running') return c.json({ ok: true, install })
-    const here = dirname(fileURLToPath(import.meta.url))
-    const script = [join(here, '..', 'scripts', 'build-parakeet.sh'), join(process.cwd(), 'scripts', 'build-parakeet.sh')].find((p) => existsSync(p))
-    if (!script) return c.json({ error: 'The Parakeet setup script is missing from this build.' }, 500)
-    install = { state: 'running', log: '', startedAt: Date.now() }
-    const p = spawn(process.env.SHELL || '/bin/zsh', ['-lc', `sh "${script}"`], { env: { ...process.env, ALFREDO_HOME: appHome() } })
-    const add = (d: Buffer) => (install.log = (install.log + d.toString()).slice(-4000))
-    p.stdout.on('data', add)
-    p.stderr.on('data', add)
-    p.on('close', (code) => {
-      install.state = code === 0 && parakeetAvailable() ? 'done' : 'failed'
-    })
-    return c.json({ ok: true, install })
-  })
-  app.post('/transcribe/start', async (c) => {
-    if (audio.isRecording()) return c.json({ error: 'Already transcribing a meeting.' }, 409)
-    const b = await c.req.json<{ title?: string; micOnly?: boolean }>().catch(() => ({}) as { title?: string; micOnly?: boolean })
-    const id = randomUUID()
-    const r = audio.start(id, !!b.micOnly)
-    jobs.set(id, { id, title: b.title?.trim() || 'Meeting', project: projectOf(c), workspace: current()?.workspace.id, state: 'recording', startedAt: r.startedAt })
-    return c.json({ id, startedAt: r.startedAt })
-  })
-  app.post('/transcribe/stop', async (c) => {
-    const st = store()
-    const b = await c.req.json<{ title?: string }>().catch(() => ({}) as { title?: string })
-    const r = await audio.stop()
-    const job = jobs.get(r.id) ?? { id: r.id, title: 'Meeting', state: 'recording' as const, startedAt: Date.now() - r.durationS * 1000 }
-    if (b.title?.trim()) job.title = b.title.trim()
-    jobs.set(r.id, job)
-    finish(job, st, r.path, r.durationS, job.startedAt, current()?.workspace.id ?? '')
-    return c.json({ id: r.id, systemAudio: r.systemAudio })
-  })
-  /* What is being recorded or written up right now, for the app's frame to
-     draw wherever you are. A finished one stays a minute so a window that
-     looked away can still notice it; a failed one until it is dismissed. */
-  app.get('/transcribe/active', (c) => {
-    const here = current()?.workspace.id
-    const now = Date.now()
-    return c.json(
-      [...jobs.values()]
-        .filter((j) => !j.workspace || j.workspace === here)
-        .filter((j) => j.state !== 'done' || now - (j.endedAt ?? now) < 60_000)
-        .map(({ project: _p, workspace: _w, ...j }) => j),
-    )
-  })
-  app.delete('/transcribe/:id', (c) => {
-    const j = jobs.get(c.req.param('id'))
-    if (j && (j.state === 'failed' || j.state === 'done')) jobs.delete(j.id)
-    return c.json({ ok: true })
-  })
-  app.get('/transcribe/:id', (c) => {
-    const j = jobs.get(c.req.param('id'))
-    return j ? c.json(j) : c.json({ error: 'unknown job' }, 404)
-  })
-
-  /* Upcoming meetings from Google Calendar, through Composio: every calendar
-   * account this workspace uses, as one list in the order things happen. With
-   * none chosen, whichever account the CLI falls to, as before. */
-  app.get('/calendar/upcoming', async (c) => {
-    const wsId = current()?.workspace.id ?? ''
-    const aliases = accountsFor(current()?.workspace, 'googlecalendar')
-    const key = `${wsId}|${aliases.join('+')}`
-    /* Each account is a CLI run of a few seconds. The page should not sit on
-       "Checking your calendar" for that every time it is opened: what was
-       found last is handed over at once, and looked at again behind it. */
-    const kept = calendars.get(key)
-    const fresh = kept && Date.now() - kept.at < 60_000
-    if (!fresh && !looking.has(key)) {
-      const look = lookAtCalendars(aliases)
-        .then((answer) => void calendars.set(key, { at: Date.now(), answer }))
-        .catch(() => {})
-        .finally(() => looking.delete(key))
-      looking.set(key, look)
-    }
-    if (kept) return c.json({ ...kept.answer, checking: !fresh })
-    await looking.get(key)
-    return c.json(calendars.get(key)?.answer ?? { connected: false, events: [], calendars: [], error: 'Calendar unavailable' })
-  })
-
-  app.get('/asset', async (c) => {
-    const cur = current()
-    const src = c.req.query('src') ?? ''
-    if (!cur || cur.workspace.kind !== 'cloudflare' || !(cur.db instanceof CloudflareWorkspace)) return c.json({ error: 'not found' }, 404)
-    if (!/^\/assets\/[\w./-]+$/.test(src) || src.includes('..')) return c.json({ error: 'bad path' }, 400)
-    const res = await cur.db.raw(src)
-    return new Response(res.body, { status: res.status, headers: { 'content-type': res.headers.get('content-type') ?? 'application/octet-stream', 'cache-control': 'private, max-age=3600' } })
-  })
+  /* What needs this machine (the microphone, the local models, files on its
+     disk, a CLI on its PATH) is added by whoever has one: the desktop app does,
+     the hosted site does not. See v2-desktop.ts. */
+  theMachine().routes(app, { store, current, mine, projectOf, mapOf, NO_PROJECT })
 
   return app
 }

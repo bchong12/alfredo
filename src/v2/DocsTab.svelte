@@ -414,7 +414,7 @@
     box-sizing: border-box;
   }
   .tile:hover {
-    border-color: #3a3a3a;
+    border-color: var(--line-strong);
     background: var(--panel);
   }
   .tile.sk {

@@ -4,7 +4,7 @@
 // installed under that name. A rename must not orphan 87 MB of workspaces:
 // an existing folder keeps being used, and only a fresh install gets the new
 // one. Same for the workspace folder in the home directory.
-import { existsSync } from 'node:fs'
+import { existsSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -28,5 +28,9 @@ export function workspaceFolder(): string {
 
 /** The recorder helper, under its current name or the one it was built with. */
 export function audioHelper(): string {
-  return pick(join(appHome(), 'bin', 'alfredo-audio'), join(appHome(), 'bin', 'alfred-audio'))
+  // One you built yourself wins; otherwise the one the packaged app ships.
+  // (An empty file is a build made without Swift: no helper.)
+  const shipped = process.env.ALFREDO_RESOURCES ? join(process.env.ALFREDO_RESOURCES, 'bin', 'alfredo-audio') : ''
+  const real = (p: string) => existsSync(p) && statSync(p).size > 0
+  return [join(appHome(), 'bin', 'alfredo-audio'), join(appHome(), 'bin', 'alfred-audio'), shipped].find(real) ?? join(appHome(), 'bin', 'alfredo-audio')
 }

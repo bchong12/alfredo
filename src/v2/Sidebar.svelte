@@ -14,7 +14,8 @@
   import ChevronRight from '@lucide/svelte/icons/chevron-right'
   import { ui, visibleTabs, go, openPack, packView } from './state.svelte'
   import { PACK_TABS } from './packs'
-  import { activeWorkspace } from '../lib/workspace.svelte'
+  import Download from '@lucide/svelte/icons/download'
+  import { activeWorkspace, workspace } from '../lib/workspace.svelte'
   import { scope } from './project.svelte'
   import { brandOf } from './remembered.svelte'
   import { TAB_PATHS, prefetch } from './cache'
@@ -73,6 +74,16 @@
 
   <div class="spacer"></div>
 
+  {#if workspace.hosted}
+    <!-- The site is the same workspace with less in it: nothing here records,
+         reads in, or talks to an agent. Say so where the tabs end. -->
+    <a class="getapp" href="https://github.com/bchong12/alfredo/releases/latest" target="_blank" rel="noopener">
+      <span class="gettop"><Download size={13} /><b>Get the desktop app</b></span>
+      <span class="getwhy">It is the better one: it records and transcribes meetings, answers questions from everything in here, and works with your AI through MCP. This site shows the same workspace without those.</span>
+      <span class="getcta">Download for Mac, Windows or Linux</span>
+    </a>
+  {/if}
+
   <button class="account" class:open={ui.overlay === 'account'} onclick={() => (ui.overlay = ui.overlay === 'account' ? null : 'account')}>
     <Face person={ui.me} size={24} />
     <span class="wsname">{ui.me?.name ?? 'You'}</span>
@@ -117,6 +128,39 @@
   .switcher {
     border: 1px solid var(--line);
     background: var(--bg);
+  }
+  .getapp {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin: 0 0 8px;
+    padding: 10px 10px 11px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-lg);
+    background: var(--panel);
+    color: var(--ink-2);
+    text-decoration: none;
+    font-size: var(--fs-1);
+    line-height: 1.45;
+  }
+  .getapp:hover {
+    border-color: var(--line-strong);
+    color: var(--ink);
+  }
+  .gettop {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--ink);
+    font-size: var(--fs-2);
+  }
+  .getwhy {
+    color: var(--muted);
+  }
+  .getcta {
+    color: var(--ink);
+    text-decoration: underline;
+    text-underline-offset: 2px;
   }
   .switcher:hover,
   .switcher.open,

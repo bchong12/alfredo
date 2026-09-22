@@ -46,7 +46,11 @@
   const ws = $derived(activeWorkspace())
   const where = (k?: string) => (k === 'remote' ? 'Supabase' : k === 'cloudflare' ? 'Cloudflare D1' : 'This Mac')
 
-  const PAGES: { id: SettingsPage; label: string; icon: any; group: 'ws' | 'app' }[] = [
+  /* On the site there is no machine behind the app: nothing to connect a
+     database to, no CLI to reach other apps through, no models on a disk. Those
+     pages are the desktop app's. */
+  const MACHINE_ONLY: SettingsPage[] = ['database', 'connections', 'models']
+  const ALL_PAGES: { id: SettingsPage; label: string; icon: any; group: 'ws' | 'app' }[] = [
     { id: 'general', label: 'General', icon: Building, group: 'ws' },
     { id: 'tabs', label: 'Tabs', icon: LayoutGrid, group: 'ws' },
     { id: 'projects', label: 'Projects', icon: FolderTree, group: 'ws' },
@@ -57,6 +61,7 @@
     { id: 'models', label: 'Models', icon: Cpu, group: 'app' },
     { id: 'appearance', label: 'Appearance', icon: Sun, group: 'app' },
   ]
+  const PAGES = $derived(workspace.hosted ? ALL_PAGES.filter((p) => !MACHINE_ONLY.includes(p.id)) : ALL_PAGES)
 
   // --- projects ------------------------------------------------------------------
   let projects = $state<Project[]>([])
@@ -159,6 +164,23 @@
   function invitation() {
     const who = ui.me?.name ? `${ui.me.name} has invited you` : 'You have been invited'
     const place = ui.settings?.name ?? ws?.name ?? 'a workspace'
+    const as = lastInvited || 'your email address'
+    if (workspace.hosted) {
+      // From the site, the site itself is the first door; the app is the other.
+      return [
+        `${who} to ${place}.`,
+        '',
+        `Open this and create an account as ${as}:`,
+        '',
+        `${location.origin}/#${madeLink}`,
+        '',
+        `To have it as an app on your Mac instead: download Alfredo (${DOWNLOAD}), choose Add workspace, then "I have an invite", and paste this:`,
+        '',
+        madeLink,
+        '',
+        'The link works once, for that address, and stops working in two weeks.',
+      ].join('\n')
+    }
     return [
       `${who} to ${place} on Alfredo.`,
       '',
@@ -166,7 +188,7 @@
       '',
       `1. Download it: ${DOWNLOAD}`,
       '2. Open Alfredo, choose Add workspace, then "I have an invite"',
-      `3. Paste this, and sign in as ${lastInvited || 'your email address'}:`,
+      `3. Paste this, and sign in as ${as}:`,
       '',
       madeLink,
       '',
@@ -207,7 +229,7 @@
   let status = $state<{ kind: string; ok: boolean; detail: string; missing?: string[] } | null>(null)
   $effect(() => {
     const id = ws?.id
-    if (!id) return
+    if (!id || workspace.hosted) return
     api<{ kind: string; ok: boolean; detail: string; missing?: string[] }>(`/api/workspaces/${id}/status`).then((s) => (status = s)).catch(() => {})
   })
   async function saveSettings(patch: Partial<Settings>) {
@@ -472,7 +494,7 @@
   })
 
   let engine = $state<{ parakeet: boolean } | null>(null)
-  v2.get<{ parakeet: boolean }>('/transcribe/engine').then((e) => (engine = e)).catch(() => {})
+  if (!workspace.hosted) v2.get<{ parakeet: boolean }>('/transcribe/engine').then((e) => (engine = e)).catch(() => {})
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -518,7 +540,7 @@
               <span class="h">{where(ws?.kind)} {#if status}<i class="dot" class:bad={!status.ok}></i><small>{status.ok ? 'Connected' : 'Not reachable'}</small>{/if}</span>
               <span class="mono">{status?.detail ?? ''}</span>
             </div>
-            <button class="ghost" onclick={() => (ui.settingsPage = 'database')}>Change</button>
+            {#if !workspace.hosted}<button class="ghost" onclick={() => (ui.settingsPage = 'database')}>Change</button>{/if}
           </div>
         </section>
         {#if ws && ws.kind !== 'remote'}
@@ -711,7 +733,8 @@
             <div class="lab">
               <b>{invitesAreLinks ? 'Invite someone' : 'Add someone'}</b>
               <span>
-                {#if invitesAreLinks}They get a link, open Alfredo, paste it and sign in with this email. What they can reach is decided here, and kept in this workspace's database.
+                {#if invitesAreLinks && workspace.hosted}They create an account on this site with this email, or paste the link into the Alfredo app. What they can reach is decided here, and kept in this workspace's database.
+                {:else if invitesAreLinks}They get a link, open Alfredo, paste it and sign in with this email. What they can reach is decided here, and kept in this workspace's database.
                 {:else}A workspace on this Mac has no sign-in, so this just adds a name to assign work to.{/if}
               </span>
             </div>
@@ -772,7 +795,7 @@
               <div class="inviteacts">
                 <button class="primary sm" onclick={copyInvitation}>{invitationCopied ? 'Copied' : 'Copy the invitation'}</button>
                 <span class="note">
-                  The invitation says where to download Alfredo and what to do with the link. Send it however you like; it works once,
+                  The invitation says {workspace.hosted ? 'where to sign up, and where to get the app' : 'where to download Alfredo and what to do with the link'}. Send it however you like; it works once,
                   for that address, and stops working in two weeks.
                 </span>
               </div>
@@ -825,7 +848,7 @@
                 <button class="ghost" onclick={() => (openPerson = openPerson === p.id ? null : p.id)}>{openPerson === p.id ? 'Done' : 'Projects'}</button>
               {/if}
               <div class="w110">
-                {#if ws?.kind === 'cloudflare' || !scope.canManage}
+                {#if !scope.canManage}
                   <span class="role">{#if p.role === 'admin'}<Shield size={11} />{/if}{p.role === 'admin' ? 'Admin' : p.role === 'viewer' ? 'Viewer' : 'Member'}</span>
                 {:else}
                   <Select
@@ -1020,7 +1043,7 @@
     background: var(--panel);
     border: 1px solid var(--line-strong);
     border-radius: 12px;
-    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6);
+    box-shadow: var(--shadow-md);
     overflow: hidden;
   }
   nav {
@@ -1146,7 +1169,7 @@
     align-items: center;
     justify-content: center;
     gap: 8px;
-    border: 1px dashed #333;
+    border: 1px dashed var(--line-strong);
     border-radius: var(--r-lg);
     color: var(--ink-2);
     font-size: 12px;
@@ -1474,7 +1497,7 @@
     margin-top: 2px;
     flex-shrink: 0;
     border-radius: 50%;
-    border: 1.5px solid #4a4a4a;
+    border: 1.5px solid var(--muted);
     box-sizing: border-box;
   }
   .choice.on .radio {
@@ -1651,7 +1674,7 @@
     height: 26px;
     padding: 0 8px;
     border-radius: 5px;
-    background: #1e1e1e;
+    background: var(--raised);
     border: 0;
     color: var(--ink);
     font: inherit;

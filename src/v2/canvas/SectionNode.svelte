@@ -8,7 +8,7 @@
   const page = $derived(d.variant === 'miro-page')
 </script>
 
-<NodeResizer isVisible={selected} minWidth={200} minHeight={120} lineStyle="border-color:#ededed" handleStyle="background:#ededed;border:0" />
+<NodeResizer isVisible={selected} minWidth={200} minHeight={120} lineStyle="border-color:var(--ink)" handleStyle="background:var(--ink);border:0" />
 <Handles />
 <div class="frame" class:page class:sel={selected}>
   <div class="label framegrip">
@@ -26,19 +26,19 @@
     height: 100%;
     box-sizing: border-box;
     position: relative;
-    border: 1.5px dashed #333;
+    border: 1.5px dashed var(--line-strong);
     border-radius: 4px;
-    background: rgba(255, 255, 255, 0.015);
+    background: color-mix(in srgb, var(--ink) 2%, transparent);
   }
   .frame.page {
-    border: 1px solid #262626;
+    border: 1px solid var(--line-strong);
     border-style: solid;
     border-radius: 2px;
-    background: #141414;
-    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+    background: var(--raised);
+    box-shadow: var(--shadow-md);
   }
   .sel {
-    border-color: #ededed;
+    border-color: var(--ink);
   }
   .label {
     position: absolute;
@@ -53,16 +53,16 @@
     font-size: 23px;
     font-weight: 700;
     letter-spacing: -0.035em;
-    color: #d4d4d4;
+    color: var(--ink);
   }
   .page .label span {
     font-size: 37px;
     font-weight: 400;
-    color: #8a8a8a;
+    color: var(--muted);
   }
   .label small {
     font-size: 12px;
-    color: #7e7e7e;
+    color: var(--muted);
   }
   .caption {
     position: absolute;
@@ -77,13 +77,13 @@
     font-size: 28px;
     line-height: 1.25;
     font-weight: 700;
-    color: #ededed;
+    color: var(--ink);
   }
   .caption i {
     display: block;
     height: 2px;
     width: 62%;
     max-width: 1050px;
-    background: #4a4a4a;
+    background: var(--line-strong);
   }
 </style>

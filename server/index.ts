@@ -21,6 +21,8 @@ import * as audio from './audio'
 import { requireSession } from './auth'
 import { prefixFor, setRefPrefix } from '../src/lib/ref'
 import { v2Routes } from './v2'
+import { useMachine } from './v2-machine'
+import { desktopMachine } from './v2-desktop'
 import * as connect from './connect'
 import * as cfDeploy from './cloudflare-deploy'
 import * as google from './google-auth'
@@ -376,6 +378,8 @@ if (!PUBLIC) {
   })
 }
 
+// What only a machine can do (record, read in, answer) lives in the desktop machine.
+useMachine(desktopMachine)
 app.route('/api/v2', v2Routes(() => ctx.getStore() as any))
 
 app.get('/health', (c) => c.json({ ok: true }))

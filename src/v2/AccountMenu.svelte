@@ -84,7 +84,7 @@
     flex: 1;
   }
   .item:hover {
-    background: #222;
+    background: var(--raised);
     color: var(--ink);
   }
   kbd,

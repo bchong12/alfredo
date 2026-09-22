@@ -29,7 +29,7 @@
     gap: 8px;
     padding: 0 9px;
     border-radius: var(--r-lg);
-    border: 1px dashed #3a3a3a;
+    border: 1px dashed var(--line-strong);
     background: var(--bg);
     font-family: inherit;
     font-size: 12px;

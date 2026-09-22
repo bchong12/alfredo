@@ -66,7 +66,7 @@
     color: var(--ink);
   }
   .card:hover {
-    border-color: #3a3a3a;
+    border-color: var(--line-strong);
   }
   .card.done {
     background: none;

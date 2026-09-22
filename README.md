@@ -56,11 +56,11 @@ It is one app, built for a team that would rather own the data and the bill.
 
 ## Get it
 
-[**Download the latest release**](https://github.com/bchong12/alfredo/releases/latest)
-for macOS, Windows or Linux, unzip it, and open it. The builds are not
-code-signed, so the first launch needs one push past the warning: on macOS
-`xattr -dr com.apple.quarantine /Applications/Alfredo.app`, on Windows
-SmartScreen's *More info* then *Run anyway*. Building it yourself avoids both.
+[**Download the latest release**](https://github.com/bchong12/alfredo/releases/latest).
+On a Mac, open the `.dmg` and drag Alfredo into Applications; it is signed and
+notarized, so it opens like any other app. On Windows and Linux, unzip it and
+run it. The Windows build is not code-signed yet, so SmartScreen asks once:
+*More info*, then *Run anyway*.
 
 If someone sent you an invite, open Alfredo, choose **Add workspace**, then
 **I have an invite**, and paste their link.

@@ -5,13 +5,16 @@
   import WorkspaceMark from './WorkspaceMark.svelte'
   import Header from './Header.svelte'
   import { auth, post, signIn, signUp, signInWithGoogle } from '../lib/session.svelte'
-  import { activeWorkspace, pendingInvite, clearInvite } from '../lib/workspace.svelte'
+  import { activeWorkspace, pendingInvite, clearInvite, workspace } from '../lib/workspace.svelte'
   import { loadWorkspaceState } from './state.svelte'
+  import { v2 } from './api'
 
   const ws = $derived(activeWorkspace())
   /** The invitation waiting for this workspace, if one was pasted in. */
   const invite = $derived(ws ? pendingInvite(ws.id) : null)
-  const owner = $derived(ws?.supabase?.mode !== 'member')
+  // The hosted site has no owner's install behind it: an account there is
+  // made against the project directly, and only an invited email gets in.
+  const owner = $derived(!workspace.hosted && ws?.supabase?.mode !== 'member')
   let mode = $state<'in' | 'new'>('in')
   let name = $state('')
   let email = $state('')
@@ -27,7 +30,8 @@
   async function claim() {
     if (!invite || !ws) return
     try {
-      await post(`/api/workspaces/${ws.id}/claim`, { token: invite, name: name.trim() || undefined })
+      if (workspace.hosted) await v2.post('/invites/claim', { token: invite, name: name.trim() || undefined })
+      else await post(`/api/workspaces/${ws.id}/claim`, { token: invite, name: name.trim() || undefined })
       clearInvite(ws.id)
       await loadWorkspaceState(email.trim() || null)
     } catch (e) {
@@ -86,6 +90,7 @@
         {:else if owner}You connected this database, so the first account here runs the workspace: you invite everyone else.
         {:else}Use the email an admin invited, or ask them for an invite link.{/if}
       </p>
+      {#if !workspace.hosted}
       <button type="button" class="google" onclick={google} disabled={busy}>
         <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
           <path fill="#4285F4" d="M23.5 12.3c0-.8-.1-1.6-.2-2.3H12v4.5h6.5a5.6 5.6 0 0 1-2.4 3.7v3h3.9c2.3-2.1 3.5-5.2 3.5-8.9z" />
@@ -96,6 +101,7 @@
         Sign in with Google
       </button>
       <span class="or">or</span>
+      {/if}
       {#if mode === 'new'}<label><span>Name</span><input bind:value={name} autocomplete="name" /></label>{/if}
       <label><span>Email</span><input type="email" bind:value={email} autocomplete="username" required /></label>
       <label><span>Password</span><input type="password" bind:value={password} autocomplete={mode === 'in' ? 'current-password' : 'new-password'} minlength={mode === 'new' ? 8 : undefined} required /></label>

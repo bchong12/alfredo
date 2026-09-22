@@ -172,7 +172,7 @@ export async function claimInvite(id: string, o: { token: string; name?: string;
     auth: { persistSession: false, autoRefreshToken: false },
     global: { headers: { Authorization: `Bearer ${o.session}` } },
   })
-  const { data, error } = await as.rpc('alfredo_join', { token_hash: hashToken(o.token), display_name: o.name ?? null })
+  const { data, error } = await as.rpc('alfredo_join', { token_hash: await hashToken(o.token), display_name: o.name ?? null })
   if (error) throw new Error(error.message.replace(/^.*?:\s*/, ''))
   return { person: data }
 }

@@ -526,7 +526,7 @@
   }
   .card:hover,
   .card:focus-visible {
-    border-color: #3a3a3a;
+    border-color: var(--line-strong);
   }
   .card.done {
     background: none;
@@ -711,7 +711,7 @@
   }
   .row:hover,
   .row.on {
-    background: #242424;
+    background: var(--raised);
     color: var(--ink);
   }
   .row.today {
@@ -767,7 +767,7 @@
     cursor: pointer;
   }
   .opt:hover {
-    background: #242424;
+    background: var(--raised);
   }
   .link {
     background: none;

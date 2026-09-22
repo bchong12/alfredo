@@ -76,6 +76,8 @@ async function ensureServer() {
   if (await up(`http://127.0.0.1:${PORT}/api/workspaces`)) return // already running (npm run dev)
   const env = { ...loginEnv(), CRM_PORT: String(PORT), CRM_PUBLIC: '0' }
   if (!DEV) env.ALFRED_DESKTOP = '1'
+  // Where the packaged app keeps what it ships beside the code (the audio helper).
+  if (!DEV) env.ALFREDO_RESOURCES = process.resourcesPath
   const ef = envFile()
   const entry = DEV ? ['--import', 'tsx', join(ROOT, 'server/index.ts')] : [join(ROOT, 'dist-server/index.mjs')]
   const args = [...(ef ? ['--env-file', ef] : []), ...entry]

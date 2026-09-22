@@ -112,7 +112,7 @@
       targetHandle: e.targetHandle ?? undefined,
       type: e.type === 'straight' || e.type === 'step' || e.type === 'default' ? e.type : 'smoothstep',
       label: e.label || undefined,
-      labelStyle: 'fill:#d4d4d4;font-weight:600;font-size:18px',
+      labelStyle: 'fill:var(--ink);font-weight:600;font-size:18px',
       data: e.data,
       style,
       markerEnd: e.markerEnd ?? { type: 'arrowclosed' as any, color: stroke },
@@ -523,7 +523,7 @@
             setTimeout(opening, 60)
           }}
         />
-        <Background variant={BackgroundVariant.Dots} gap={22} size={1} bgColor="#0f0f0f" patternColor="#1c1c1c" />
+        <Background variant={BackgroundVariant.Dots} gap={22} size={1} bgColor="var(--panel)" patternColor="var(--line)" />
       </SvelteFlow>
 
       {#if one}
@@ -620,12 +620,12 @@
     min-height: 0;
   }
   .flowhost :global(.svelte-flow) {
-    --xy-edge-label-background-color: #0f0f0f;
-    --xy-edge-label-background-color-default: #0f0f0f;
-    --xy-edge-label-color: #a1a1a1;
+    --xy-edge-label-background-color: var(--panel);
+    --xy-edge-label-background-color-default: var(--panel);
+    --xy-edge-label-color: var(--ink-2);
     --xy-node-border-radius: 8px;
-    --xy-selection-background-color: rgba(237, 237, 237, 0.05);
-    --xy-selection-border: 1px solid rgba(237, 237, 237, 0.4);
+    --xy-selection-background-color: var(--accent-soft);
+    --xy-selection-border: 1px solid var(--line-strong);
   }
   .flowhost :global(.svelte-flow__node) {
     background: none;
@@ -636,8 +636,8 @@
   .flowhost :global(.svelte-flow__handle) {
     width: 8px;
     height: 8px;
-    background: #0f0f0f;
-    border: 1.5px solid #6b6b6b;
+    background: var(--panel);
+    border: 1.5px solid var(--muted);
     opacity: 0;
   }
   .flowhost :global(.svelte-flow__handle.detail) {
@@ -695,7 +695,7 @@
     border-radius: 12px;
     background: var(--raised);
     border: 1px solid var(--line-strong);
-    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+    box-shadow: var(--shadow-md);
     z-index: 5;
   }
   .tool {
@@ -715,7 +715,7 @@
     background: var(--accent-soft);
   }
   .tool.on {
-    background: #2a2a2a;
+    background: var(--raised);
     color: var(--ink);
   }
   .tool.zoom {
@@ -728,7 +728,7 @@
   .div {
     width: 1px;
     height: 20px;
-    background: #2e2e2e;
+    background: var(--line-strong);
     margin: 0 2px;
   }
   .swatches {
@@ -855,7 +855,7 @@
     text-overflow: ellipsis;
   }
   .fmenu button:hover {
-    background: #242424;
+    background: var(--raised);
     color: var(--ink);
   }
   .state {
@@ -930,7 +930,7 @@
     cursor: pointer;
   }
   .ccard:hover {
-    border-color: #3a3a3a;
+    border-color: var(--line-strong);
   }
   .thumb {
     height: 150px;

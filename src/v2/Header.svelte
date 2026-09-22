@@ -48,7 +48,7 @@
     color: var(--muted);
   }
   .slash {
-    color: #3a3a3a;
+    color: var(--line-strong);
   }
   .grow {
     flex: 1;

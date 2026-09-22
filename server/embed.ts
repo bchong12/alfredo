@@ -138,4 +138,4 @@ export const embedQuery = async (q: string) =>
   (await embed([EMBED_MODEL.includes('bge') ? `Represent this sentence for searching relevant passages: ${q}` : q]))[0]
 
 /** Postgres wants a vector literal, not an array. */
-export const toVector = (v: number[]) => `[${v.map((x) => x.toFixed(6)).join(',')}]`
+export { toVector } from './vector'
