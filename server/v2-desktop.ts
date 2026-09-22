@@ -259,8 +259,9 @@ function routes(app: Hono, { store, current, mine, projectOf, mapOf, NO_PROJECT 
     const inCall = !!named || (p.micInUse && !audio.isRecording())
     return c.json({ inCall, app: named ?? (inCall ? 'A call' : null), screen: p.screen, known: !!named })
   })
-  app.post('/transcribe/permissions/screen', (c) => {
-    audio.askForScreen()
+  app.post('/transcribe/permissions/screen', async (c) => {
+    const b = await c.req.json<{ reset?: boolean }>().catch(() => ({}) as { reset?: boolean })
+    audio.askForScreen(!!b.reset)
     return c.json({ ok: true })
   })
 

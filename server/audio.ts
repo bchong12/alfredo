@@ -97,17 +97,19 @@ export function probe(): Promise<Probe> {
 
 /** Ask macOS for the screen's audio: the system prompt if it has not been
  *  answered, and the Settings pane either way, since a refusal only lives there. */
-export function askForScreen() {
-  // A grant from an earlier build can be on record and still not count (the
-  // signature changed), showing as allowed in Settings while nothing works.
-  // Clearing Alfredo's own entry first makes the next answer a real one.
-  const reset = spawn('tccutil', ['reset', 'ScreenCapture', 'design.purist.alfredo'], { stdio: 'ignore' })
-  reset.on('error', () => {})
-  reset.on('close', () => {
+export function askForScreen(reset = false) {
+  const ask = () => {
     if (nativeAvailable()) spawn(HELPER, ['check'], { stdio: 'ignore' }).on('error', () => {})
     spawn('open', ['x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture'], { stdio: 'ignore' }).on('error', () => {})
-  })
+  }
   lastProbe = null
+  if (!reset) return ask()
+  // A grant from an earlier build can be on record and still not count (the
+  // signature changed), showing as allowed in Settings while nothing works.
+  // Clearing Alfredo's own entry makes the next answer a real one.
+  const r = spawn('tccutil', ['reset', 'ScreenCapture', 'design.purist.alfredo'], { stdio: 'ignore' })
+  r.on('error', ask)
+  r.on('close', ask)
 }
 /** Call once at boot so the first recording does not wait on a device scan. */
 export const prepare = () => resolveMic().catch(() => {})

@@ -64,6 +64,12 @@
     setTimeout(checkEngine, 4000)
     setTimeout(checkEngine, 15000)
   }
+  /** Forget what macOS has on record for Alfredo, so the next ask is a real one. */
+  async function resetScreen() {
+    await v2.post('/transcribe/permissions/screen', { reset: true }).catch(() => {})
+    setTimeout(checkEngine, 4000)
+    setTimeout(checkEngine, 15000)
+  }
   if (onAMachine) checkEngine()
   async function download() {
     try {
@@ -283,9 +289,14 @@
             <div class="mi"><Cpu size={17} /></div>
             <div class="mt">
               <span class="h">This machine hears one side of a call</span>
-              <span class="s">Recording picks up {engine.hears.why}.{#if engine.hears.fix === 'screen'} macOS calls it Screen & System Audio Recording, under Privacy & Security; turn Alfredo on there and it hears the call.{/if}</span>
+              <span class="s">Recording picks up {engine.hears.why}.{#if engine.hears.fix === 'screen'} macOS calls it Screen & System Audio Recording, under Privacy & Security: Allow asks for it there. If it already shows as on for Alfredo and still does not count (a permission from an earlier build), Reset clears that entry so macOS asks again.{/if}</span>
             </div>
-            {#if engine.hears.fix === 'screen'}<button class="primary sm" onclick={allowScreen}>Allow</button>{/if}
+            {#if engine.hears.fix === 'screen'}
+              <div class="acts">
+                <button class="primary sm" onclick={allowScreen}>Allow</button>
+                <button class="ghost sm" onclick={resetScreen}>Reset</button>
+              </div>
+            {/if}
           </div>
         {/if}
         {#if engine && engine.canRecord === false}
@@ -393,6 +404,12 @@
 {/if}
 
 <style>
+  .acts {
+    display: flex;
+    gap: 6px;
+    flex: none;
+  }
+
   .page {
     height: 100%;
     display: flex;

@@ -20,14 +20,18 @@
   import StepNode from './StepNode.svelte'
   import DecisionNode from './DecisionNode.svelte'
   import { v2, type Person } from '../../api'
+  import { untrack } from 'svelte'
   import { ui } from '../../state.svelte'
-  import { canEditHere } from '../../project.svelte'
+  import { canEditHere, scope } from '../../project.svelte'
   import { peek, load as fetchCached, put } from '../../cache'
   import { EMPTY, layout, newId, standing, summary, tidy, wouldLoop, type Decision, type Roadmap, type Step } from './model'
 
   let { tabName }: { kind: string; tabName: string; view: string } = $props()
 
-  const PATH = '/packs/roadmap.main'
+  // One roadmap per project, and one for the workspace as a whole (what shows
+  // with every project in view, or with projects off). Each is its own pack
+  // data, so an agent reads a project's with get_pack_data key:"roadmap.<id>".
+  const PATH = $derived(scope.enabled && scope.id && scope.id !== 'none' ? `/packs/roadmap.${scope.id}` : '/packs/roadmap.main')
   let road = $state<Roadmap>(tidy(peek(PATH) ?? EMPTY))
   let loading = $state(!peek(PATH))
   let saving = $state(false)
@@ -38,11 +42,25 @@
   let flow: any = null
   const canEdit = $derived(canEditHere())
 
-  fetchCached<unknown>(PATH)
-    .then((raw) => (road = tidy(raw)))
-    // A workspace with no roadmap yet says so with a 404: that is an empty one.
-    .catch(() => {})
-    .finally(() => ((loading = false), setTimeout(fit, 80)))
+  // Whichever project is in view, that project's roadmap.
+  $effect(() => {
+    const path = PATH
+    untrack(() => {
+      clearTimeout(timer)
+      open = null
+      road = tidy(peek(path) ?? EMPTY)
+      loading = !peek(path)
+    })
+    fetchCached<unknown>(path)
+      .then((raw) => {
+        if (path === PATH) road = tidy(raw)
+      })
+      // A project with no roadmap yet says so with a 404: that is an empty one.
+      .catch(() => {})
+      .finally(() => {
+        if (path === PATH) ((loading = false), setTimeout(fit, 80))
+      })
+  })
 
   let timer: ReturnType<typeof setTimeout> | undefined
   function changed(next: Roadmap) {
