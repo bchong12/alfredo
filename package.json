@@ -20,7 +20,7 @@
     "desktop:build:mac": "npm run build:desktop-ui && npm run build:server && node scripts/helper.mjs && electron-builder --mac --dir",
     "release:mac": "npm run build:desktop-ui && npm run build:server && node scripts/helper.mjs && node scripts/release-mac.mjs",
     "ship": "node scripts/ship.mjs",
-    "desktop:build:win": "npm run build:desktop-ui && npm run build:server && electron-builder --win --dir",
+    "desktop:build:win": "npm run build:desktop-ui && npm run build:server && electron-builder --win --publish never",
     "desktop:build:linux": "npm run build:desktop-ui && npm run build:server && electron-builder --linux --dir"
   },
   "dependencies": {
@@ -124,7 +124,13 @@
     "win": {
       "icon": "desktop/icon/icon.png",
       "target": [
-        "dir"
+        "nsis"
+      ],
+      "extraResources": [
+        {
+          "from": "dist-helper/alfredo-audio.exe",
+          "to": "bin/alfredo-audio.exe"
+        }
       ],
       "files": [
         "!node_modules/onnxruntime-node/bin/napi-v6/darwin",
@@ -132,6 +138,13 @@
         "!node_modules/@img/sharp-darwin*",
         "!node_modules/@img/sharp-linux*"
       ]
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "artifactName": "Alfredo-Setup-${version}.exe",
+      "shortcutName": "Alfredo",
+      "deleteAppDataOnUninstall": false
     },
     "linux": {
       "icon": "desktop/icon/icon.png",

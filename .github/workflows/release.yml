@@ -51,8 +51,8 @@ jobs:
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
           $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
           cmd /c "`"$vs\VC\Auxiliary\Build\vcvars64.bat`" && cl /nologo /O2 /EHsc /std:c++17 native\alfredo-audio-win\main.cpp /Fe:alfredo-audio.exe /link ole32.lib"
-          New-Item -ItemType Directory -Force -Path dist-app\helper | Out-Null
-          Move-Item alfredo-audio.exe dist-app\helper\alfredo-audio.exe
+          New-Item -ItemType Directory -Force -Path dist-helper | Out-Null
+          Move-Item alfredo-audio.exe dist-helper\alfredo-audio.exe
 
       - name: Package
         run: npm run desktop:build:${{ runner.os == 'Windows' && 'win' || 'linux' }}
@@ -76,9 +76,10 @@ jobs:
             Windows) src=win-unpacked; name="alfredo-$tag-windows-x64" ;;
             Linux)   src=linux-unpacked; name="alfredo-$tag-linux-x64" ;;
           esac
-          [ -d helper ] && cp -R helper "$src/" || true
           if [ "${{ runner.os }}" = "Linux" ]; then tar -czf "../$name.tar.gz" "$src"; else
             command -v zip >/dev/null && zip -qry "../$name.zip" "$src" || 7z a -tzip "../$name.zip" "$src" >/dev/null
+            # The installer and its manifest are what the in-app updater reads.
+            cp Alfredo-Setup-*.exe Alfredo-Setup-*.exe.blockmap latest.yml ..
           fi
           ls -la ..
 
@@ -88,6 +89,9 @@ jobs:
           path: |
             *.zip
             *.tar.gz
+            *.exe
+            *.blockmap
+            latest.yml
           if-no-files-found: error
 
   publish:
@@ -115,12 +119,15 @@ jobs:
           | | |
           | --- | --- |
           | macOS, Apple silicon | `Alfredo-*-arm64.dmg` (drag it into Applications) |
-          | Windows, 64-bit | `*-windows-x64.zip` |
+          | Windows, 64-bit | `Alfredo-Setup-*.exe` (installs in a few seconds; updates itself from then on) |
           | Linux, 64-bit | `*-linux-x64.tar.gz` |
 
           On first launch Alfredo asks where your first workspace should live; if
           someone sent you an invite, choose **Add workspace**, then **I have an
           invite**, and paste their link.
+
+          The `*-windows-x64.zip` is the same app unpacked, for people who would rather
+          not run an installer; it cannot update itself.
 
           The Mac app is signed and notarized. The Windows build is not code-signed
           yet, so SmartScreen asks once: **More info**, then **Run anyway**. Or build
