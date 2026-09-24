@@ -76,7 +76,7 @@
   <div class="spacer"></div>
 
   <!-- Ask the database again for what is on screen. Quiet, and out of the way. -->
-  <button class="refresh" class:busy={refreshing.busy} title="Refresh (⌘R)" aria-label="Refresh" onclick={() => void refreshWorkspace()}><RefreshCw size={12} /></button>
+  <button class="refresh" class:busy={refreshing.busy} title="Refresh (⌘R)" aria-label="Refresh" onclick={() => void refreshWorkspace()}><RefreshCw size={13} /></button>
 
   {#if workspace.hosted}
     <!-- The site is the same workspace with less in it: nothing here records,
@@ -138,17 +138,18 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 24px;
-    height: 24px;
-    margin: 0 2px 4px 0;
-    border-radius: 6px;
-    border: 0;
+    width: 28px;
+    height: 28px;
+    margin: 0 0 6px 0;
+    border-radius: 7px;
+    border: 1px solid var(--line);
     background: none;
-    color: var(--line-strong);
+    color: var(--muted);
     cursor: pointer;
   }
   .refresh:hover {
-    color: var(--ink-2);
+    color: var(--ink);
+    border-color: var(--line-strong);
     background: var(--accent-soft);
   }
   .refresh.busy :global(svg) {
