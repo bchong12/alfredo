@@ -24,7 +24,8 @@ export type Job = {
 export const rec = $state<{ jobs: Job[]; title: string; ready: Job | null; call: Call | null; ended: boolean }>({ jobs: [], title: '', ready: null, call: null, ended: false })
 
 /** A call the machine can see going on: the app it is in, and when it was first seen. */
-export type Call = { app: string; since: number; known: boolean }
+export type Call = { app: string; since: number; known: boolean; event?: CalEvent | null }
+export type CalEvent = { id: string; title: string; start: string; end: string; link: string | null }
 
 export const recordingNow = () => rec.jobs.find((j) => j.state === 'recording') ?? null
 export const writingUp = () => rec.jobs.filter((j) => j.state === 'transcribing' || j.state === 'writing')
@@ -102,19 +103,40 @@ let wavedAway = 0 // the `since` of the call that was declined
 let quiet = 0 // polls in a row with no call, while recording one
 const CALL_EVERY_MS = 6000
 
+let told = '' // the last notification sent, so each is sent once
+let listeningForNotes = false
+function say(id: string, title: string, body: string, action: string) {
+  const key = `${id}|${title}|${body}`
+  if (told === key || !window.alfredo?.notify) return
+  told = key
+  window.alfredo.notify({ id, title, body, action })
+}
+
 export async function watchCalls() {
   clearTimeout(callTimer)
-  const seen = await v2.get<{ inCall: boolean; app: string | null; known: boolean }>('/transcribe/call').catch(() => null)
+  if (!listeningForNotes && window.alfredo?.onNotificationAction) {
+    listeningForNotes = true
+    window.alfredo.onNotificationAction(({ id, action }) => {
+      if (id === 'call' && action !== 'open') void recordThisCall()
+      if (id === 'ended' && action !== 'open') void stopRecording()
+    })
+  }
+  const seen = await v2.get<{ inCall: boolean; app: string | null; known: boolean; event?: CalEvent | null }>('/transcribe/call').catch(() => null)
   if (seen) {
+    const recording = recordingNow()
     if (seen.inCall) {
       quiet = 0
       rec.ended = false
-      if (!rec.call) rec.call = { app: seen.app ?? 'A call', since: Date.now(), known: seen.known }
-      else if (seen.known && !rec.call.known) rec.call = { ...rec.call, app: seen.app ?? rec.call.app, known: true }
+      if (!rec.call) rec.call = { app: seen.app ?? 'A call', since: Date.now(), known: seen.known, event: seen.event ?? null }
+      else if ((seen.known && !rec.call.known) || (seen.event && !rec.call.event)) rec.call = { ...rec.call, app: seen.app ?? rec.call.app, known: rec.call.known || seen.known, event: rec.call.event ?? seen.event ?? null }
+      if (offerToRecord()) {
+        const what = rec.call!.event?.title ?? (rec.call!.app === 'A call' ? 'A call' : rec.call!.app)
+        say('call', 'A meeting seems to be going on', `${what}${rec.call!.event && rec.call!.app !== 'A call' ? ` (${rec.call!.app})` : ''}. Transcribe it?`, 'Transcribe')
+      }
     } else if (rec.call) {
       // Only a call the machine could name is worth saying has ended: while
       // recording, the microphone being open is Alfredo itself.
-      if (recordingNow() && rec.call.known) {
+      if (recording && rec.call.known) {
         quiet++
         if (quiet >= 3) {
           rec.ended = true
@@ -125,6 +147,12 @@ export async function watchCalls() {
         quiet = 0
       }
     }
+    // The calendar's word: the event this recording was for has been over a while.
+    if (recording && !rec.ended && rec.call?.event && Date.parse(rec.call.event.end) + 3 * 60_000 < Date.now() && !seen.known) {
+      rec.ended = true
+      rec.call = null
+    }
+    if (recording && rec.ended) say('ended', 'Seems like your meeting ended', `Stop and write “${rec.title || recording.title || 'Meeting'}” up?`, 'Stop')
   }
   callTimer = setTimeout(watchCalls, CALL_EVERY_MS)
 }
@@ -137,7 +165,9 @@ export function waveAway() {
   if (rec.call) wavedAway = rec.call.since
 }
 export async function recordThisCall() {
+  if (recordingNow()) return
   const app = rec.call?.app ?? ''
-  const ok = await startRecording(app && app !== 'A call' ? `${app} call` : '')
+  // The calendar's name for it beats the app's.
+  const ok = await startRecording(rec.call?.event?.title ?? (app && app !== 'A call' ? `${app} call` : ''))
   if (ok) rec.ended = false
 }

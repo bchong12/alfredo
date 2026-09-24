@@ -10,4 +10,8 @@ contextBridge.exposeInMainWorld('alfredo', {
   /** Look now rather than on the clock; answers { version } or { error }. */
   checkForUpdate: () => ipcRenderer.invoke('check-update'),
   version: process.env.ALFREDO_VERSION ?? '',
+  /** A system notification. `action` is the one button it offers, if any. */
+  notify: (n) => ipcRenderer.send('notify', n),
+  /** Called with { id, action } when a notification's button, or its body, was pressed. */
+  onNotificationAction: (cb) => ipcRenderer.on('notify-action', (_e, r) => cb(r)),
 })

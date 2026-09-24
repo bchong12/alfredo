@@ -50,7 +50,7 @@
   </div>
 {:else if offerToRecord()}
   <div class="pill">
-    <span class="name">{rec.call!.app === 'A call' ? 'Something is using the microphone' : `${rec.call!.app} is running`}. Transcribe it?</span>
+    <span class="name">{rec.call!.event ? `${rec.call!.event.title} is on${rec.call!.app !== 'A call' ? ` (${rec.call!.app})` : ''}` : rec.call!.app === 'A call' ? 'Something is using the microphone' : `${rec.call!.app} is running`}. Transcribe it?</span>
     <button class="rec" onclick={recordThisCall}><i class="dot"></i>Transcribe</button>
     <button class="x" aria-label="Not this one" title="Not this one" onclick={waveAway}><X size={13} /></button>
   </div>

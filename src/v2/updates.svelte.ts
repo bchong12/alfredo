@@ -7,6 +7,8 @@ declare global {
       installUpdate: () => void
       checkForUpdate: () => Promise<{ version?: string | null; error?: string }>
       version: string
+      notify: (n: { id: string; title: string; body?: string; action?: string; silent?: boolean }) => void
+      onNotificationAction: (cb: (r: { id: string; action: string }) => void) => void
     }
   }
 }

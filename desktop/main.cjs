@@ -3,7 +3,7 @@
 // packaged, it serves the built files itself. macOS, Windows and Linux differ
 // in two small ways here, both marked WIN below: where PATH comes from, and
 // whether closing the last window quits.
-const { app, BrowserWindow, ipcMain, shell, nativeTheme, screen, session, desktopCapturer, systemPreferences } = require('electron')
+const { app, BrowserWindow, ipcMain, Notification, shell, nativeTheme, screen, session, desktopCapturer, systemPreferences } = require('electron')
 const { spawn } = require('node:child_process')
 const { join } = require('node:path')
 const { existsSync } = require('node:fs')
@@ -163,6 +163,28 @@ function setupUpdates() {
   setTimeout(look, 15_000)
   setInterval(look, 4 * 60 * 60_000)
 }
+
+/*
+ * System notifications, for the page: a meeting the machine can see going
+ * on, or one that seems to have ended. One button each; pressing it, or the
+ * notification itself, brings the window up and tells the page which.
+ */
+ipcMain.on('notify', (_e, n) => {
+  if (!Notification.isSupported()) return
+  const note = new Notification({
+    title: n.title,
+    body: n.body ?? '',
+    silent: !!n.silent,
+    ...(n.action && process.platform === 'darwin' ? { actions: [{ type: 'button', text: n.action }], closeButtonText: 'Not now' } : {}),
+  })
+  const tell = (action) => {
+    if (win) { if (win.isMinimized()) win.restore(); win.show(); win.focus() }
+    win?.webContents.send('notify-action', { id: n.id, action })
+  }
+  note.on('action', () => tell(n.action))
+  note.on('click', () => tell(process.platform === 'darwin' ? 'open' : n.action ?? 'open'))
+  note.show()
+})
 
 app.whenReady().then(async () => {
   ownIcon()

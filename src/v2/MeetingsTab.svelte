@@ -12,6 +12,7 @@
   import Header from './Header.svelte'
   import CopyNode from './CopyNode.svelte'
   import DocEditor from '../lib/DocEditor.svelte'
+  import ActionItems from './ActionItems.svelte'
   import { v2, ago, type Meeting, type MeetingSummary } from './api'
   import { ui, go, openSettings } from './state.svelte'
   import { workspace } from '../lib/workspace.svelte'
@@ -38,6 +39,7 @@
   let now = $state(Date.now())
   let meeting = $state<Meeting | null>(null)
   let view = $state<'notes' | 'transcript'>('notes')
+  let notesKey = $state(0)
   let saving = $state<'idle' | 'saving' | 'saved'>('idle')
   let timer: ReturnType<typeof setTimeout> | undefined
 
@@ -242,7 +244,9 @@
           />
         </div>
         {#if view === 'notes'}
-          {#key meeting.id}
+          <ActionItems {meeting} canEdit={canEditHere()} onnotes={(md) => ((meeting!.notes = md), notesKey++, queue({ notes: md }))} />
+          <!-- Re-made when the notes were changed from outside the editor (a card ref written in). -->
+          {#key `${meeting.id}:${notesKey}`}
             <DocEditor value={meeting.notes} onchange={(md) => queue({ notes: md })} placeholder="Notes appear here after the meeting. Write your own too." />
           {/key}
         {:else}

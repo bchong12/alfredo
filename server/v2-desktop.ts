@@ -254,11 +254,28 @@ function routes(app: Hono, { store, current, mine, projectOf, mapOf, NO_PROJECT 
      or, when nothing is being recorded here, the microphone open elsewhere. */
   app.get('/transcribe/call', async (c) => {
     const p = await audio.probe().catch(() => null)
-    if (!p) return c.json({ inCall: false, app: null, screen: false, known: false })
+    const event = eventNow(current()?.workspace.id ?? '')
+    if (!p) return c.json({ inCall: false, app: null, screen: false, known: false, event })
     const named = p.calls[0]?.app ?? null
-    const inCall = !!named || (p.micInUse && !audio.isRecording())
-    return c.json({ inCall, app: named ?? (inCall ? 'A call' : null), screen: p.screen, known: !!named })
+    // A calendar event with a call link, happening now, counts as a call too:
+    // the app itself may not have a window the machine can name.
+    const inCall = !!named || (p.micInUse && !audio.isRecording()) || (!!event?.link && p.micInUse)
+    return c.json({ inCall, app: named ?? (inCall ? 'A call' : null), screen: p.screen, known: !!named || (!!event && inCall), event })
   })
+  /** The calendar event going on right now in this workspace, from what the
+   *  calendar last said (a few minutes either side, since people are late). */
+  function eventNow(wsId: string): { id: string; title: string; start: string; end: string; link: string | null } | null {
+    const now = Date.now()
+    for (const [key, kept] of calendars) {
+      if (!key.startsWith(`${wsId}|`)) continue
+      for (const e of kept.answer.events as any[]) {
+        const start = Date.parse(e.start), end = Date.parse(e.end)
+        if (!Number.isFinite(start) || !Number.isFinite(end)) continue
+        if (start - 3 * 60_000 <= now && now <= end + 5 * 60_000) return { id: e.id, title: e.title, start: e.start, end: e.end, link: e.link ?? null }
+      }
+    }
+    return null
+  }
   app.post('/transcribe/permissions/screen', async (c) => {
     const b = await c.req.json<{ reset?: boolean }>().catch(() => ({}) as { reset?: boolean })
     audio.askForScreen(!!b.reset)
