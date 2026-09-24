@@ -7,9 +7,27 @@
   import { theme, toggleTheme, effectiveTheme } from '../lib/theme.svelte'
   import { auth, signOut } from '../lib/session.svelte'
   import { activeWorkspace } from '../lib/workspace.svelte'
+  import { update } from './updates.svelte'
+  import RefreshCw from '@lucide/svelte/icons/refresh-cw'
 
   const dark = $derived(theme.mode === 'dark' || (theme.mode === 'system' && effectiveTheme() === 'dark'))
   const canSignOut = $derived(activeWorkspace()?.kind === 'remote' && !!auth.session)
+
+  // Which Alfredo this is, and a way to ask for a newer one now rather than
+  // on the clock. Only the desktop app has a shell to ask.
+  const version = window.alfredo?.version ?? ''
+  let checking = $state(false)
+  let said = $state('')
+  async function checkNow() {
+    if (!window.alfredo || checking) return
+    checking = true
+    said = ''
+    const r = await window.alfredo.checkForUpdate()
+    checking = false
+    if (r.error) said = 'Could not reach the releases.'
+    else if (r.version && r.version !== version) said = `${r.version} is downloading`
+    else said = 'This is the latest'
+  }
 </script>
 
 <div class="menu" role="menu">
@@ -31,6 +49,12 @@
         signOut()
       }}><LogOut size={14} /><span>Sign out</span></button
     >
+  {/if}
+  {#if version}
+    <div class="sep"></div>
+    <button class="item" role="menuitem" onclick={checkNow} disabled={checking}>
+      <RefreshCw size={14} /><span>{update.version ? `${update.version} is ready` : said || `Alfredo ${version}`}</span><span class="val">{checking ? 'Checking…' : update.version ? '' : 'Check for updates'}</span>
+    </button>
   {/if}
 </div>
 

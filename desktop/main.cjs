@@ -123,7 +123,8 @@ function createWindow() {
     // Windows and Linux take the icon from the window; macOS takes it from
     // the bundle, and from the dock in development (see below).
     ...(process.platform === 'darwin' ? {} : { icon: join(__dirname, 'icon', 'icon.png') }),
-    webPreferences: { contextIsolation: true, sandbox: true, preload: join(__dirname, 'preload.cjs') },
+    // The version rides along for the page to show (a sandboxed preload sees argv, not env).
+    webPreferences: { contextIsolation: true, sandbox: true, preload: join(__dirname, 'preload.cjs'), additionalArguments: [`--alfredo-version=${app.getVersion()}`] },
   })
   win.loadURL(UI)
   // Links leave the app; the app is for Alfredo.
