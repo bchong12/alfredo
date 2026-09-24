@@ -1521,48 +1521,72 @@ export function v2Routes(current: () => { workspace: Workspace; db: unknown } | 
     let list: Project[] = raw.map((p) => (owners.has(p.id) ? { ...p, personal: owners.get(p.id)! } : p)).filter((p) => !p.personal || p.personal === me.id)
     const shared = (current()?.workspace.kind ?? 'local') !== 'local'
     if (shared && me.id && !list.some((p) => p.personal === me.id)) {
-      const made = await makePersonal(st, [me.id], raw, set)
-      list = [...list, ...made.filter((p) => p.personal === me.id)]
+      // Mine is missing: make it (an admin makes everyone's while at it),
+      // then look again with the map as it is now.
+      await keepPersonal(st, me.admin ? null : me.id)
+      const [raw2, set2] = await Promise.all([st.projects(), st.settings()])
+      const owners2 = new Map(Object.entries(set2.personal ?? {}).map(([person, project]) => [project, person]))
+      list = raw2.map((p) => (owners2.has(p.id) ? { ...p, personal: owners2.get(p.id)! } : p)).filter((p) => !p.personal || p.personal === me.id)
+    } else if (shared && me.admin) {
+      // An admin's app makes them for everyone else too, so a teammate finds
+      // theirs waiting rather than only once they have opened the workspace.
+      void keepPersonal(st, null)
     }
-    // An admin's app makes them for everyone else too, so a teammate finds
-    // theirs waiting rather than only once they have opened the workspace.
-    if (shared && me.admin) void makeForEveryone(st, set)
     const allowed = list.filter((p) => canOpenProject(p, me))
     return { me, all: list, allowed, roleOf: (id: string) => projectRole(list.find((p) => p.id === id) ?? ({ members: [] } as any), me) }
   }
-  const making = new Map<string, Promise<Project[]>>()
-  /** Personal projects for these people, in one write; the settings map remembers whose is whose. */
-  function makePersonal(st: Store, people: string[], all: Project[], set: Settings): Promise<Project[]> {
-    const key = `${current()?.workspace.id ?? ''}|${people.slice().sort().join(',')}`
-    const going = making.get(key)
-    if (going) return going
-    const job = (async () => {
-      const made: Project[] = people.map((person) => ({ id: randomUUID(), name: 'Personal', color: 'slate', members: [{ personId: person, role: 'admin' }], personal: person }))
-      await st.saveProjects([...all, ...made.map(({ personal: _p, ...p }) => p)])
-      const latest = await st.settings()
-      const personal = { ...(latest.personal ?? {}) }
-      for (const p of made) personal[p.personal!] = p.id
-      await st.saveSettings({ personal, ...(set.projects?.enabled ? {} : { projects: { enabled: true } }) })
-      whoCache.clear()
-      return made
-    })()
-      .catch(() => [] as Project[])
-      .finally(() => making.delete(key))
-    making.set(key, job)
-    return job
-  }
-  const everyoneLooked = new Map<string, number>()
-  async function makeForEveryone(st: Store, set: Settings) {
+  /*
+   * Everyone's personal project, kept right. One pass at a time per workspace
+   * (two at once is how a person ended up with three): read the map, adopt a
+   * "Personal" that nobody's map entry names (one member, its owner) or fold
+   * a duplicate into the one the map names, make one for whoever has none,
+   * and write the map back once. `only` limits the making to one person,
+   * for someone who is not an admin.
+   */
+  const tidying = new Map<string, Promise<void>>()
+  const lookedAt = new Map<string, number>()
+  function keepPersonal(st: Store, only: string | null): Promise<void> {
     const wsId = current()?.workspace.id ?? ''
-    if (Date.now() - (everyoneLooked.get(wsId) ?? 0) < 10 * 60_000) return
-    everyoneLooked.set(wsId, Date.now())
-    try {
-      const [people, raw, latest] = await Promise.all([st.members(), st.projects(), st.settings()])
-      const have = latest.personal ?? {}
-      const alive = new Set(raw.map((p) => p.id))
-      const missing = people.map((m) => m.id).filter((id) => !have[id] || !alive.has(have[id]))
-      if (missing.length) await makePersonal(st, missing, raw, { ...set, ...latest })
-    } catch {}
+    if (only === null) {
+      if (Date.now() - (lookedAt.get(wsId) ?? 0) < 10 * 60_000) return tidying.get(wsId) ?? Promise.resolve()
+      lookedAt.set(wsId, Date.now())
+    }
+    const job = (tidying.get(wsId) ?? Promise.resolve())
+      .then(async () => {
+        const [people, raw, set] = await Promise.all([st.members(), st.projects(), st.settings()])
+        const personal: Record<string, string> = { ...(set.personal ?? {}) }
+        const alive = new Set(raw.map((p) => p.id))
+        for (const [person, id] of Object.entries(personal)) if (!alive.has(id)) delete personal[person]
+        const named = () => new Set(Object.values(personal))
+        const drop: string[] = []
+        // Strays: a Personal with one member that the map does not name.
+        for (const p of raw) {
+          if (p.name !== 'Personal' || p.members.length !== 1 || named().has(p.id)) continue
+          const person = p.members[0].personId
+          if (!personal[person]) {
+            personal[person] = p.id
+            continue
+          }
+          // A duplicate: what is in it goes to the one that counts, then it goes.
+          const map = await mapOf(st)
+          for (const kind of ITEM_KINDS) {
+            const ids = Object.entries(map).filter(([k, v]) => k.startsWith(kind + ':') && v === p.id).map(([k]) => k.slice(kind.length + 1))
+            if (ids.length) await st.assign(kind, ids, personal[person])
+          }
+          drop.push(p.id)
+        }
+        const want = only ? [only] : people.map((m) => m.id)
+        const missing = want.filter((id) => !personal[id])
+        const made: Project[] = missing.map((person) => ({ id: randomUUID(), name: 'Personal', color: 'slate', members: [{ personId: person, role: 'admin' }] }))
+        for (const p of made) personal[p.members[0].personId] = p.id
+        if (drop.length || made.length) await st.saveProjects([...raw.filter((p) => !drop.includes(p.id)), ...made])
+        const changed = JSON.stringify(personal) !== JSON.stringify(set.personal ?? {})
+        if (changed || !set.projects?.enabled) await st.saveSettings({ ...(changed ? { personal } : {}), ...(set.projects?.enabled ? {} : { projects: { enabled: true } }) })
+        if (changed) whoCache.clear()
+      })
+      .catch(() => {})
+    tidying.set(wsId, job)
+    return job
   }
   /** What a project looks like to the person asking: their role, and the people in it when they run it. */
   const seenBy = (p: Project, me: Viewer) => ({
