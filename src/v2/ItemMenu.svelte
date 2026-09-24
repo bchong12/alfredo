@@ -133,7 +133,7 @@
               {/each}
               {#if liveProjects().length}<span class="rule"></span>{/if}
               <button role="menuitemradio" aria-checked={!project} onclick={(e) => act(e, () => move(null))}>
-                <i class="d none"></i><span class="t">No project</span>{#if !project}<Check size={13} />{/if}
+                <i class="d none"></i><span class="t">General</span>{#if !project}<Check size={13} />{/if}
               </button>
             </div>
           {/if}

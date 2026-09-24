@@ -395,7 +395,7 @@
               {#each [0, 1, 2] as _}<div class="row sk"><Skeleton w={32} h={30} r={6} /><div class="rt"><Skeleton w="50%" h={12} /><Skeleton w="30%" h={10} /></div></div>{/each}
             {:else}
               <p class="empty">
-                {#if scope.enabled && scope.id}Nothing here yet. Meetings {onAMachine ? 'you record' : 'recorded in the desktop app'} in this project land here; to move an existing one, open the project it is in (or Unfiled) and use its three dots.
+                {#if scope.enabled && scope.id}Nothing here yet. Meetings {onAMachine ? 'you record' : 'recorded in the desktop app'} in this project land here; to move an existing one, open the project it is in (or General) and use its three dots.
                 {:else if onAMachine}No meetings yet.
                 {:else}No meetings yet. Recording and transcribing happen in the desktop app; what it saves shows up here.{/if}
               </p>

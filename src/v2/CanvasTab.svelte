@@ -596,7 +596,7 @@
             <div class="empty">
               <Shapes size={20} />
               <p>
-                {#if scope.enabled && scope.id}Nothing here yet. New canvases land in this project; to move an existing one, open the project it is in (or Unfiled) and use its three dots.
+                {#if scope.enabled && scope.id}Nothing here yet. New canvases land in this project; to move an existing one, open the project it is in (or General) and use its three dots.
                 {:else}No canvases yet. Start one for a plan, a flow or a retro.{/if}
               </p>
             </div>

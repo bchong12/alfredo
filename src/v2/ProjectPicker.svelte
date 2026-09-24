@@ -44,7 +44,7 @@
     {#if label}<span>Project</span>{/if}
     <Select
       value={value ?? ''}
-      options={[{ value: '', label: 'No project', dot: 'none' }, ...liveProjects().map((p) => ({ value: p.id, label: p.name, dot: p.color }))]}
+      options={[{ value: '', label: 'General', dot: 'none' }, ...liveProjects().map((p) => ({ value: p.id, label: p.name, dot: p.color }))]}
       onchange={(v) => move(v || null)}
       ariaLabel="Project"
     />

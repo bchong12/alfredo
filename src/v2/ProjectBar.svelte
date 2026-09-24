@@ -42,14 +42,15 @@
           {#if scope.id === p.id}<Check size={13} />{/if}
         </button>
       {:else}
-        <span class="none">{scope.canManage ? 'No projects yet.' : 'You are not in a project yet. An admin can add you.'}</span>
+        <span class="none">No projects yet.</span>
       {/each}
+      <div class="line"></div>
+      <!-- General: the room everyone shares, the work that is in no project. -->
+      <button class="row" onclick={() => ((open = false), setProject(NO_PROJECT))}>
+        <CircleDashed size={13} /><span class="grow">General</span>
+        {#if scope.id === NO_PROJECT}<Check size={13} />{/if}
+      </button>
       {#if scope.canManage}
-        <div class="line"></div>
-        <button class="row" onclick={() => ((open = false), setProject(NO_PROJECT))}>
-          <CircleDashed size={13} /><span class="grow">Unfiled</span>
-          {#if scope.id === NO_PROJECT}<Check size={13} />{/if}
-        </button>
         <button class="row" onclick={() => ((open = false), openSettings('projects'))}><Plus size={13} /><span class="grow">New project</span></button>
       {/if}
     </div>

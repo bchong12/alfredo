@@ -35,11 +35,11 @@ export const scope = $state({
   id: null as string | null,
 })
 
-/** The work that is in no project: the room everyone shares. Admins are offered it on its own, to file old work. */
+/** General: the work that is in no project, the room everyone shares. */
 export const NO_PROJECT = 'none'
 /** Whether something in `project` belongs in the list on screen: everything
  *  does with no project open, only its own does inside one, and only the
- *  unfiled under Unfiled. */
+ *  work in none under General. */
 export const belongsHere = (project: string | null | undefined) =>
   !scope.enabled || !scope.id || (scope.id === NO_PROJECT ? !project : project === scope.id)
 
@@ -62,7 +62,7 @@ export function afterMove<T extends { id: string; project?: string | null }>(lis
 
 export const activeProject = () => scope.list.find((p) => p.id === scope.id) ?? null
 /** What the switcher says right now. */
-export const projectLabel = () => (scope.id === NO_PROJECT ? 'Unfiled' : (activeProject()?.name ?? 'Pick a project'))
+export const projectLabel = () => (scope.id === NO_PROJECT ? 'General' : (activeProject()?.name ?? 'Pick a project'))
 /** What you may do where you are: a project's role, or the workspace's when nothing is open. */
 export const myRole = (): ProjectRole => {
   if (!scope.enabled) return 'write'

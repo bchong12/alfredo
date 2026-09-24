@@ -73,7 +73,7 @@
     query.trim()
       ? 'Nothing matches that search.'
       : scope.enabled && scope.id
-        ? 'Nothing here yet. New docs land in this project; to move an existing one, open the project it is in (or Unfiled) and use its three dots.'
+        ? 'Nothing here yet. New docs land in this project; to move an existing one, open the project it is in (or General) and use its three dots.'
         : 'No docs yet. Start one with New doc.',
   )
 

@@ -795,7 +795,7 @@
                 {/each}
               </div>
               {#if !Object.keys(inviteProjects).length}
-                <p class="note">Every project is at No access, so this person would see only work that is in no project. Pick what they can open before making the link.</p>
+                <p class="note">Every project is at No access, so this person would see General (the work in no project) and their own Personal. Pick what else they can open before making the link.</p>
               {/if}
             {/if}
             {#if madeLink}
@@ -836,7 +836,7 @@
                         {#if i.role === 'admin'}Admin · every project
                         {:else if !scope.enabled || !projects.length}Member
                         {:else if i.projects.length}Member · {i.projects.map((x) => `${projects.find((p) => p.id === x.id)?.name ?? 'a project'} (${ROLE_WORDS[x.role] ?? 'reads'})`).join(', ')}
-                        {:else}Member · no projects, so only work that is in none. Revoke and invite again to change that.{/if}
+                        {:else}Member · General and their own Personal only. Revoke and invite again to change that.{/if}
                       </span>
                     </span>
                     <button class="ghost" onclick={() => revokeInvite(i.id)}>Revoke</button>

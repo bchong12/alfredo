@@ -55,18 +55,18 @@
       class="chip"
       class:empty={!current}
       class:busy
-      title={current ? `In ${current.name}` : 'In no project'}
+      title={current ? `In ${current.name}` : 'In General'}
       onclick={(e) => (e.stopPropagation(), (open = !open))}
     >
       <i class="d {current?.color ?? 'none'}"></i>
-      {#if !compact}<span class="t">{current?.name ?? 'No project'}</span>{/if}
+      {#if !compact}<span class="t">{current?.name ?? 'General'}</span>{/if}
     </button>
     {#if open}
       <!-- svelte-ignore a11y_click_events_have_key_events -->
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <span class="catch" onclick={(e) => (e.stopPropagation(), (open = false))}></span>
       <span class="menu">
-        <button onclick={(e) => move(e, null)}><i class="d none"></i><span class="t">No project</span>{#if !project}<Check size={12} />{/if}</button>
+        <button onclick={(e) => move(e, null)}><i class="d none"></i><span class="t">General</span>{#if !project}<Check size={12} />{/if}</button>
         {#each liveProjects() as p (p.id)}
           <button onclick={(e) => move(e, p.id)}><i class="d {p.color}"></i><span class="t">{p.name}</span>{#if project === p.id}<Check size={12} />{/if}</button>
         {/each}
