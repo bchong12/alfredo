@@ -1521,29 +1521,48 @@ export function v2Routes(current: () => { workspace: Workspace; db: unknown } | 
     let list: Project[] = raw.map((p) => (owners.has(p.id) ? { ...p, personal: owners.get(p.id)! } : p)).filter((p) => !p.personal || p.personal === me.id)
     const shared = (current()?.workspace.kind ?? 'local') !== 'local'
     if (shared && me.id && !list.some((p) => p.personal === me.id)) {
-      const made = await makePersonal(st, me.id, raw, set)
-      if (made) list = [...list, made]
+      const made = await makePersonal(st, [me.id], raw, set)
+      list = [...list, ...made.filter((p) => p.personal === me.id)]
     }
+    // An admin's app makes them for everyone else too, so a teammate finds
+    // theirs waiting rather than only once they have opened the workspace.
+    if (shared && me.admin) void makeForEveryone(st, set)
     const allowed = list.filter((p) => canOpenProject(p, me))
     return { me, all: list, allowed, roleOf: (id: string) => projectRole(list.find((p) => p.id === id) ?? ({ members: [] } as any), me) }
   }
-  const making = new Map<string, Promise<Project | null>>()
-  function makePersonal(st: Store, person: string, all: Project[], set: Settings) {
-    const key = `${current()?.workspace.id ?? ''}|${person}`
+  const making = new Map<string, Promise<Project[]>>()
+  /** Personal projects for these people, in one write; the settings map remembers whose is whose. */
+  function makePersonal(st: Store, people: string[], all: Project[], set: Settings): Promise<Project[]> {
+    const key = `${current()?.workspace.id ?? ''}|${people.slice().sort().join(',')}`
     const going = making.get(key)
     if (going) return going
     const job = (async () => {
-      const p: Project = { id: randomUUID(), name: 'Personal', color: 'slate', members: [{ personId: person, role: 'admin' }] }
-      await st.saveProjects([...all, p])
+      const made: Project[] = people.map((person) => ({ id: randomUUID(), name: 'Personal', color: 'slate', members: [{ personId: person, role: 'admin' }], personal: person }))
+      await st.saveProjects([...all, ...made.map(({ personal: _p, ...p }) => p)])
       const latest = await st.settings()
-      await st.saveSettings({ personal: { ...(latest.personal ?? {}), [person]: p.id }, ...(set.projects?.enabled ? {} : { projects: { enabled: true } }) })
+      const personal = { ...(latest.personal ?? {}) }
+      for (const p of made) personal[p.personal!] = p.id
+      await st.saveSettings({ personal, ...(set.projects?.enabled ? {} : { projects: { enabled: true } }) })
       whoCache.clear()
-      return { ...p, personal: person }
+      return made
     })()
-      .catch(() => null)
+      .catch(() => [] as Project[])
       .finally(() => making.delete(key))
     making.set(key, job)
     return job
+  }
+  const everyoneLooked = new Map<string, number>()
+  async function makeForEveryone(st: Store, set: Settings) {
+    const wsId = current()?.workspace.id ?? ''
+    if (Date.now() - (everyoneLooked.get(wsId) ?? 0) < 10 * 60_000) return
+    everyoneLooked.set(wsId, Date.now())
+    try {
+      const [people, raw, latest] = await Promise.all([st.members(), st.projects(), st.settings()])
+      const have = latest.personal ?? {}
+      const alive = new Set(raw.map((p) => p.id))
+      const missing = people.map((m) => m.id).filter((id) => !have[id] || !alive.has(have[id]))
+      if (missing.length) await makePersonal(st, missing, raw, { ...set, ...latest })
+    } catch {}
   }
   /** What a project looks like to the person asking: their role, and the people in it when they run it. */
   const seenBy = (p: Project, me: Viewer) => ({
