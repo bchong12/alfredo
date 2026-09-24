@@ -91,12 +91,12 @@ async function ensureServer() {
   }
   // Everything the server says goes to a file, so a machine where it does
   // not start has something to show (and to send).
-  const logs = join(app.getPath('home'), '.alfredo', 'logs')
+  const logs = join(appHome(), 'logs')
   try {
     mkdirSync(logs, { recursive: true })
-    if (existsSync(SERVER_LOG) && statSync(SERVER_LOG).size > 1_000_000) writeFileSync(SERVER_LOG, '')
+    if (existsSync(serverLog()) && statSync(serverLog()).size > 1_000_000) writeFileSync(serverLog(), '')
   } catch {}
-  const log = (line) => { try { appendFileSync(SERVER_LOG, line) } catch {} }
+  const log = (line) => { try { appendFileSync(serverLog(), line) } catch {} }
   log(`\n--- ${new Date().toISOString()} Alfredo ${app.getVersion()} on ${process.platform} ${process.arch}, Electron ${process.versions.electron}\n`)
   server = spawn(process.execPath, args, { cwd: ROOT, env: { ...env, ELECTRON_RUN_AS_NODE: '1' }, stdio: ['ignore', 'pipe', 'pipe'] })
   server.stdout.on('data', (d) => log(d.toString()))
@@ -110,16 +110,24 @@ async function ensureServer() {
   }
   return false
 }
-const SERVER_LOG = join(app.getPath('home'), '.alfredo', 'logs', 'server.log')
+/* The app's home, the same way the server decides it (server/home.ts): the
+   folder that already exists wins, so an older install keeps its ~/.alfred.
+   Making ~/.alfredo here first would hand the server an empty home. */
+function appHome() {
+  const home = app.getPath('home')
+  for (const dir of ['.alfredo', '.alfred']) if (existsSync(join(home, dir))) return join(home, dir)
+  return join(home, '.alfredo')
+}
+const serverLog = () => join(appHome(), 'logs', 'server.log')
 
 /** What the window shows when the server did not come up: the log, and a way to copy it. */
 function couldNotStart() {
   let tail = ''
-  try { tail = readFileSync(SERVER_LOG, 'utf8').split('\n').slice(-60).join('\n') } catch {}
+  try { tail = readFileSync(serverLog(), 'utf8').split('\n').slice(-60).join('\n') } catch {}
   const esc = (t) => t.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]))
   const html = `<!doctype html><meta charset="utf-8"><title>Alfredo</title>
 <style>body{margin:0;background:#0d0d0d;color:#ededed;font:14px/1.5 -apple-system,Segoe UI,system-ui,sans-serif}.w{max-width:760px;margin:80px auto;padding:0 24px}h1{font-size:20px;font-weight:600;margin:0 0 8px}p{color:#a1a1a1;margin:0 0 18px}pre{background:#0a0a0a;border:1px solid #262626;border-radius:8px;padding:14px;font:12px/1.5 ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;max-height:50vh;overflow:auto;color:#a1a1a1}button{margin:14px 8px 0 0;height:32px;padding:0 14px;border-radius:7px;border:1px solid #262626;background:#171717;color:#ededed;font:inherit;cursor:pointer}button.p{background:#ededed;color:#0d0d0d;border-color:#ededed}code{font-family:ui-monospace,Menlo,Consolas,monospace;color:#ededed}</style>
-<div class="w"><h1>Alfredo's server did not start</h1><p>The app runs a small server on this machine and it did not come up. Below is what it said. Copy it and send it to whoever runs your workspace; it is also at <code>${esc(SERVER_LOG)}</code>.</p><pre id="l">${esc(tail || '(nothing was written)')}</pre><button class="p" onclick="location.reload()">Try again</button><button onclick="navigator.clipboard.writeText(document.getElementById('l').innerText)">Copy the log</button></div>`
+<div class="w"><h1>Alfredo's server did not start</h1><p>The app runs a small server on this machine and it did not come up. Below is what it said. Copy it and send it to whoever runs your workspace; it is also at <code>${esc(serverLog())}</code>.</p><pre id="l">${esc(tail || '(nothing was written)')}</pre><button class="p" onclick="location.reload()">Try again</button><button onclick="navigator.clipboard.writeText(document.getElementById('l').innerText)">Copy the log</button></div>`
   return 'data:text/html;charset=utf-8,' + encodeURIComponent(html)
 }
 

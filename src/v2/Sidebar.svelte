@@ -75,9 +75,6 @@
 
   <div class="spacer"></div>
 
-  <!-- Ask the database again for what is on screen. Quiet, and out of the way. -->
-  <button class="refresh" class:busy={refreshing.busy} title="Refresh (⌘R)" aria-label="Refresh" onclick={() => void refreshWorkspace()}><RefreshCw size={13} /></button>
-
   {#if workspace.hosted}
     <!-- The site is the same workspace with less in it: nothing here records,
          reads in, or talks to an agent. Say so where the tabs end. -->
@@ -88,11 +85,16 @@
     </a>
   {/if}
 
-  <button class="account" class:open={ui.overlay === 'account'} onclick={() => (ui.overlay = ui.overlay === 'account' ? null : 'account')}>
-    <Face person={ui.me} size={24} />
-    <span class="wsname">{ui.me?.name ?? 'You'}</span>
-    <ChevronsUpDown size={14} />
-  </button>
+  <!-- You, the account menu, and beside it the one quiet way to ask the
+       database again for what is on screen. -->
+  <div class="account" class:open={ui.overlay === 'account'}>
+    <button class="who" onclick={() => (ui.overlay = ui.overlay === 'account' ? null : 'account')}>
+      <Face person={ui.me} size={24} />
+      <span class="wsname">{ui.me?.name ?? 'You'}</span>
+    </button>
+    <button class="refresh" class:busy={refreshing.busy} title="Refresh (⌘R)" aria-label="Refresh" onclick={() => void refreshWorkspace()}><RefreshCw size={13} /></button>
+    <button class="menu" aria-label="Account menu" onclick={() => (ui.overlay = ui.overlay === 'account' ? null : 'account')}><ChevronsUpDown size={14} /></button>
+  </div>
 </aside>
 
 <style>
@@ -123,9 +125,9 @@
   .account {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 2px;
     height: 44px;
-    padding: 0 8px;
+    padding: 0 6px 0 8px;
     border-radius: var(--r-lg);
     color: var(--muted);
   }
@@ -133,23 +135,38 @@
     border: 1px solid var(--line);
     background: var(--bg);
   }
-  .refresh {
-    align-self: flex-end;
+  .account .who {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    height: 100%;
+    background: none;
+    border: 0;
+    padding: 0;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+    text-align: left;
+  }
+  .account .refresh,
+  .account .menu {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 28px;
-    height: 28px;
-    margin: 0 0 6px 0;
-    border-radius: 7px;
-    border: 1px solid var(--line);
+    width: 26px;
+    height: 26px;
+    flex: none;
+    border-radius: 6px;
+    border: 0;
     background: none;
     color: var(--muted);
     cursor: pointer;
   }
-  .refresh:hover {
+  .account .refresh:hover,
+  .account .menu:hover {
     color: var(--ink);
-    border-color: var(--line-strong);
     background: var(--accent-soft);
   }
   .refresh.busy :global(svg) {
