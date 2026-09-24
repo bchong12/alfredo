@@ -28,15 +28,19 @@ $$;
 /*
  * Whether the signed-in person may see (or change) one item.
  *
- * Without projects, a workspace is one room and every member is in it. With
- * projects, people see the projects they are in and nothing else; work that
- * is in no project waits for an admin to file it.
+ * A project is its own room: people see the projects they are in. Work that
+ * is in no project is the room everyone shares, the way the whole workspace
+ * was before there were projects: every member sees it, and changes it unless
+ * they are a viewer.
  */
 create or replace function alfredo_visible(item_kind text, item text, need_write boolean default false) returns boolean
   language sql stable security definer set search_path = public as $$
   select alfredo_member() and (
     alfredo_is_admin()
-    or (not alfredo_uses_projects() and not exists (select 1 from project_items pi where pi.kind = item_kind and pi.item_id = item))
+    or (
+      not exists (select 1 from project_items pi where pi.kind = item_kind and pi.item_id = item)
+      and (not need_write or coalesce((select role <> 'viewer' from people where user_id = auth.uid() and active limit 1), false))
+    )
     or exists (
       select 1
       from project_items pi
