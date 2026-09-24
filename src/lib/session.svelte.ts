@@ -168,18 +168,29 @@ function expired(sent: string | null) {
   const now = auth.session?.access_token ?? null
   if (sent && sent === now) auth.session = null
 }
+/** Whether the session this request carried is still the one we have. */
+const stale = (sent: string | null) => sent !== (auth.session?.access_token ?? null)
+/** Give a workspace switch a moment to find its session before a retry. */
+async function settled() {
+  for (let i = 0; i < 30 && !(auth.ready && auth.for === workspace.activeId); i++) await new Promise((r) => setTimeout(r, 100))
+}
 
 /** POST for the REST API. Same session handling as api(). */
 export async function post<T>(path: string, body: unknown, method = 'POST', extra: Record<string, string> = {}): Promise<T> {
   const sent = auth.session?.access_token ?? null
-  const r = await fetch(apiUrl(path), {
+  let r = await fetch(apiUrl(path), {
     method,
     headers: { 'Content-Type': 'application/json', ...apiHeaders(), ...extra },
     body: JSON.stringify(body),
   })
+  if (r.status === 401 && stale(sent)) {
+    // It left before the right session was in place: once more, with it.
+    await settled()
+    r = await fetch(apiUrl(path), { method, headers: { 'Content-Type': 'application/json', ...apiHeaders(), ...extra }, body: JSON.stringify(body) })
+  }
   if (r.status === 401) {
-    expired(sent)
-    throw new Error('session expired')
+    expired(auth.session?.access_token ?? null)
+    throw new Error('Signed out. Sign in again.')
   }
   if (!r.ok) {
     const detail = await r.json().catch(() => null)
@@ -191,10 +202,14 @@ export async function post<T>(path: string, body: unknown, method = 'POST', extr
 /** fetch for the REST API, carrying the session and handling its expiry. */
 export async function api<T>(path: string, extra: Record<string, string> = {}): Promise<T> {
   const sent = auth.session?.access_token ?? null
-  const r = await fetch(apiUrl(path), { headers: { ...apiHeaders(), ...extra } })
+  let r = await fetch(apiUrl(path), { headers: { ...apiHeaders(), ...extra } })
+  if (r.status === 401 && stale(sent)) {
+    await settled()
+    r = await fetch(apiUrl(path), { headers: { ...apiHeaders(), ...extra } })
+  }
   if (r.status === 401) {
-    expired(sent)
-    throw new Error('session expired')
+    expired(auth.session?.access_token ?? null)
+    throw new Error('Signed out. Sign in again.')
   }
   if (!r.ok) throw new Error(`${path} failed (${r.status})`)
   return r.json() as Promise<T>

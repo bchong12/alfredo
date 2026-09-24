@@ -105,9 +105,41 @@
     })
   })
 
+  /*
+   * Refresh: ask the database again for what is on screen. The lists are
+   * cached, so someone else's change shows up when a page is next opened,
+   * not while it sits there; this is the way to ask now. ⌘R, the workspace
+   * menu, and the app itself when the window comes back to the front or
+   * after a minute of nothing open (never while something is being edited).
+   */
+  let refreshedAt = 0
+  function refreshWorkspace() {
+    refreshedAt = Date.now()
+    ui.refreshed++
+    if (workspace.activeId) untrack(() => loadWorkspaceState(email))
+  }
+  const quietRefresh = () => {
+    if (ui.item || ui.overlay || document.hidden || Date.now() - refreshedAt < 20_000) return
+    refreshWorkspace()
+  }
+  $effect(() => {
+    const onFocus = () => quietRefresh()
+    window.addEventListener('focus', onFocus)
+    document.addEventListener('visibilitychange', onFocus)
+    const t = setInterval(quietRefresh, 60_000)
+    return () => {
+      window.removeEventListener('focus', onFocus)
+      document.removeEventListener('visibilitychange', onFocus)
+      clearInterval(t)
+    }
+  })
+
   function onkey(e: KeyboardEvent) {
     const mod = e.metaKey || e.ctrlKey
-    if (mod && e.key === 'k') {
+    if (mod && e.key === 'r') {
+      e.preventDefault()
+      refreshWorkspace()
+    } else if (mod && e.key === 'k') {
       e.preventDefault()
       searching = true
     } else if (mod && e.key === ',') {
@@ -135,7 +167,7 @@
       {:else if !ui.settings}
         <PageSkeleton kind={lastKind} />
       {:else if tab}
-        {#key `${workspace.activeId}:${tab.id}:${scope.enabled ? (scope.id ?? 'all') : ''}`}
+        {#key `${workspace.activeId}:${tab.id}:${scope.enabled ? (scope.id ?? 'all') : ''}:${ui.refreshed}`}
           {#if tab.type === 'board'}
             <BoardTab tabName={tab.name} columns={tab.columns} />
           {:else if tab.type === 'docs'}
@@ -162,6 +194,10 @@
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div class="catch" onclick={() => (ui.overlay = null)}></div>
       <WorkspaceMenu
+        onrefresh={() => {
+          ui.overlay = null
+          refreshWorkspace()
+        }}
         onadd={() => {
           ui.overlay = null
           adding = true

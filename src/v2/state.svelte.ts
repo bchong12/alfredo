@@ -10,6 +10,8 @@ export type Overlay = null | 'workspaces' | 'account' | 'settings'
 export type SettingsPage = 'general' | 'projects' | 'cycles' | 'tabs' | 'members' | 'database' | 'connections' | 'models' | 'appearance' | 'updates'
 
 export const ui = $state({
+  /** Bumped by Refresh (⌘R, or the app on its own): the tab on screen is remade and asks the database again. */
+  refreshed: 0,
   tab: 'board' as string,
   /** The open doc, canvas or meeting inside the current tab, if any. */
   item: null as string | null,
