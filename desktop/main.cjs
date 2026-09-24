@@ -6,7 +6,7 @@
 const { app, BrowserWindow, ipcMain, Notification, shell, nativeTheme, screen, session, desktopCapturer, systemPreferences } = require('electron')
 const { spawn } = require('node:child_process')
 const { join } = require('node:path')
-const { existsSync } = require('node:fs')
+const { existsSync, appendFileSync, mkdirSync, statSync, writeFileSync, readFileSync } = require('node:fs')
 const http = require('node:http')
 
 const DEV = !app.isPackaged
@@ -89,11 +89,38 @@ async function ensureServer() {
       chmodSync(join(ROOT, 'node_modules/node-pty/prebuilds', arch, 'spawn-helper'), 0o755)
     } catch {}
   }
-  server = spawn(process.execPath, args, { cwd: ROOT, env: { ...env, ELECTRON_RUN_AS_NODE: '1' }, stdio: 'inherit' })
+  // Everything the server says goes to a file, so a machine where it does
+  // not start has something to show (and to send).
+  const logs = join(app.getPath('home'), '.alfredo', 'logs')
+  try {
+    mkdirSync(logs, { recursive: true })
+    if (existsSync(SERVER_LOG) && statSync(SERVER_LOG).size > 1_000_000) writeFileSync(SERVER_LOG, '')
+  } catch {}
+  const log = (line) => { try { appendFileSync(SERVER_LOG, line) } catch {} }
+  log(`\n--- ${new Date().toISOString()} Alfredo ${app.getVersion()} on ${process.platform} ${process.arch}, Electron ${process.versions.electron}\n`)
+  server = spawn(process.execPath, args, { cwd: ROOT, env: { ...env, ELECTRON_RUN_AS_NODE: '1' }, stdio: ['ignore', 'pipe', 'pipe'] })
+  server.stdout.on('data', (d) => log(d.toString()))
+  server.stderr.on('data', (d) => log(d.toString()))
+  server.on('exit', (code, signal) => log(`--- server exited: code ${code} signal ${signal}\n`))
+  server.on('error', (e) => log(`--- server could not start: ${e.message}\n`))
   for (let i = 0; i < 60; i++) {
-    if (await up(`http://127.0.0.1:${PORT}/api/workspaces`)) return
+    if (await up(`http://127.0.0.1:${PORT}/api/workspaces`)) return true
+    if (server.exitCode !== null) break
     await new Promise((r) => setTimeout(r, 500))
   }
+  return false
+}
+const SERVER_LOG = join(app.getPath('home'), '.alfredo', 'logs', 'server.log')
+
+/** What the window shows when the server did not come up: the log, and a way to copy it. */
+function couldNotStart() {
+  let tail = ''
+  try { tail = readFileSync(SERVER_LOG, 'utf8').split('\n').slice(-60).join('\n') } catch {}
+  const esc = (t) => t.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]))
+  const html = `<!doctype html><meta charset="utf-8"><title>Alfredo</title>
+<style>body{margin:0;background:#0d0d0d;color:#ededed;font:14px/1.5 -apple-system,Segoe UI,system-ui,sans-serif}.w{max-width:760px;margin:80px auto;padding:0 24px}h1{font-size:20px;font-weight:600;margin:0 0 8px}p{color:#a1a1a1;margin:0 0 18px}pre{background:#0a0a0a;border:1px solid #262626;border-radius:8px;padding:14px;font:12px/1.5 ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;max-height:50vh;overflow:auto;color:#a1a1a1}button{margin:14px 8px 0 0;height:32px;padding:0 14px;border-radius:7px;border:1px solid #262626;background:#171717;color:#ededed;font:inherit;cursor:pointer}button.p{background:#ededed;color:#0d0d0d;border-color:#ededed}code{font-family:ui-monospace,Menlo,Consolas,monospace;color:#ededed}</style>
+<div class="w"><h1>Alfredo's server did not start</h1><p>The app runs a small server on this machine and it did not come up. Below is what it said. Copy it and send it to whoever runs your workspace; it is also at <code>${esc(SERVER_LOG)}</code>.</p><pre id="l">${esc(tail || '(nothing was written)')}</pre><button class="p" onclick="location.reload()">Try again</button><button onclick="navigator.clipboard.writeText(document.getElementById('l').innerText)">Copy the log</button></div>`
+  return 'data:text/html;charset=utf-8,' + encodeURIComponent(html)
 }
 
 async function ensureUi() {
@@ -217,8 +244,10 @@ app.whenReady().then(async () => {
   // Every launch is a fresh page: a new build must never load from cache.
   const { session } = require('electron')
   await session.defaultSession.clearCache().catch(() => {})
-  await Promise.all([ensureServer(), ensureUi()])
+  const [serverUp] = await Promise.all([ensureServer(), ensureUi()])
   createWindow()
+  // No server, no app: say so, with the log, instead of a page that cannot load.
+  if (serverUp === false) win?.loadURL(couldNotStart())
   app.on('activate', () => {
     if (!win) createWindow()
     else win.show()

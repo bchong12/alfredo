@@ -6,7 +6,7 @@
 // alias (the work Gmail, a side project's Gmail). Sessions get that map in their
 // environment and pass --account when they run tools.
 
-import { spawn } from 'node-pty'
+import { pty } from './pty-load'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -71,8 +71,14 @@ export function whatWentWrong(out: string, fallback: string): string {
 let found: Promise<{ bin: string | null; path: string }> | null = null
 function whereIsComposio() {
   if (found) return found
-  found = new Promise((resolve) => {
-    const p = spawn(SHELL, ['-lic', 'command -v composio; echo "PATH=$PATH"'], { name: 'xterm-256color', cols: 200, rows: 10, cwd: homedir(), env: { ...process.env, TERM: 'xterm-256color' } })
+  found = new Promise((resolve, reject) => {
+    let p: ReturnType<ReturnType<typeof pty>['spawn']>
+    try {
+      p = pty().spawn(SHELL, ['-lic', 'command -v composio; echo "PATH=$PATH"'], { name: 'xterm-256color', cols: 200, rows: 10, cwd: homedir(), env: { ...process.env, TERM: 'xterm-256color' } })
+    } catch (e) {
+      found = null
+      return reject(e)
+    }
     let out = ''
     p.onData((d) => (out += d))
     const t = setTimeout(() => {
@@ -94,10 +100,15 @@ function whereIsComposio() {
 export function runComposio(args: string[], timeoutMs = 20_000): Promise<{ out: string; code: number }> {
   return new Promise(async (resolve) => {
     const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(CLAUDE|AI_AGENT)/.test(k)))
-    const where = await whereIsComposio()
+    let where: { bin: string | null; path: string }
+    try {
+      where = await whereIsComposio()
+    } catch (e) {
+      return resolve({ out: (e as Error).message, code: 1 })
+    }
     const p = where.bin
-      ? spawn(where.bin, args, { name: 'xterm-256color', cols: 160, rows: 40, cwd: homedir(), env: { ...env, PATH: where.path, TERM: 'xterm-256color', NO_COLOR: '1' } })
-      : spawn(SHELL, ['-lic', `composio ${args.map(q).join(' ')}`], {
+      ? pty().spawn(where.bin, args, { name: 'xterm-256color', cols: 160, rows: 40, cwd: homedir(), env: { ...env, PATH: where.path, TERM: 'xterm-256color', NO_COLOR: '1' } })
+      : pty().spawn(SHELL, ['-lic', `composio ${args.map(q).join(' ')}`], {
           name: 'xterm-256color',
           cols: 160,
           rows: 40,
