@@ -4,19 +4,25 @@
 -- Settings > Database when Alfredo sets a project up for you). Kept apart
 -- because it speaks auth.uid(), which only exists where Supabase's auth
 -- schema does; a local workspace on this Mac has one person and no sign-in.
+/* Who the signed-in login is, in people: the row whose user_id is this login,
+   or, for a row made by email before the login existed, the row with this
+   login's email. The same match the server makes. */
 create or replace function alfredo_person() returns uuid
   language sql stable security definer set search_path = public as $$
-  select id from people where user_id = auth.uid() and active limit 1;
+  select id from people
+  where active and (user_id = auth.uid() or (user_id is null and lower(email) = lower(auth.jwt() ->> 'email')))
+  order by (user_id = auth.uid()) desc nulls last
+  limit 1;
 $$;
 
 create or replace function alfredo_member() returns boolean
   language sql stable security definer set search_path = public as $$
-  select exists (select 1 from people where user_id = auth.uid() and active);
+  select alfredo_person() is not null;
 $$;
 
 create or replace function alfredo_is_admin() returns boolean
   language sql stable security definer set search_path = public as $$
-  select coalesce((select role = 'admin' from people where user_id = auth.uid() and active limit 1), false);
+  select coalesce((select role = 'admin' from people where id = alfredo_person()), false);
 $$;
 
 /** Whether this workspace is split into projects at all. */
