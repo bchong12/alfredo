@@ -1,6 +1,6 @@
 {
   "name": "alfredo",
-  "version": "0.1.13",
+  "version": "0.1.14",
   "description": "Your company brain in a database you own: board, docs, canvas and meetings, with a local MCP server for any AI agent.",
   "type": "module",
   "scripts": {
