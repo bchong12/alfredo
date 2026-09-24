@@ -87,9 +87,10 @@ export function rememberProject(ws: string) {
 export function recallProject(ws: string) {
   try {
     const want = localStorage.getItem(KEY(ws))
-    const known = (want === NO_PROJECT && scope.canManage) || scope.list.some((p) => p.id === want && !p.archived)
-    // With projects on there is no view across all of them: open one.
-    scope.id = want && known ? want : (liveProjects()[0]?.id ?? (scope.canManage ? NO_PROJECT : null))
+    const known = want === NO_PROJECT || scope.list.some((p) => p.id === want && !p.archived)
+    // With projects on there is no view across all of them: open one. The
+    // first time, General: the team's room, where the work already is.
+    scope.id = want && known ? want : NO_PROJECT
   } catch {
     scope.id = null
   }

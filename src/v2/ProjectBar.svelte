@@ -25,6 +25,11 @@
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="catch" onclick={() => (open = false)}></div>
     <div class="menu">
+      <!-- General first: the room everyone shares, where the team's work is. -->
+      <button class="row" onclick={() => ((open = false), setProject(NO_PROJECT))}>
+        <CircleDashed size={13} /><span class="grow">General</span>
+        {#if scope.id === NO_PROJECT}<Check size={13} />{/if}
+      </button>
       {#if personalProject()}
         {@const mine = personalProject()!}
         <!-- Yours: a meeting or a doc that is not the team's goes here. -->
@@ -32,8 +37,8 @@
           <UserRound size={13} /><span class="grow">Personal</span>
           {#if scope.id === mine.id}<Check size={13} />{/if}
         </button>
-        <div class="line"></div>
       {/if}
+      <div class="line"></div>
       {#each liveProjects().filter((p) => !p.personal) as p (p.id)}
         <button class="row" onclick={() => ((open = false), setProject(p.id))}>
           <i class="dot {p.color}"></i>
@@ -44,13 +49,8 @@
       {:else}
         <span class="none">No projects yet.</span>
       {/each}
-      <div class="line"></div>
-      <!-- General: the room everyone shares, the work that is in no project. -->
-      <button class="row" onclick={() => ((open = false), setProject(NO_PROJECT))}>
-        <CircleDashed size={13} /><span class="grow">General</span>
-        {#if scope.id === NO_PROJECT}<Check size={13} />{/if}
-      </button>
       {#if scope.canManage}
+        <div class="line"></div>
         <button class="row" onclick={() => ((open = false), openSettings('projects'))}><Plus size={13} /><span class="grow">New project</span></button>
       {/if}
     </div>
