@@ -409,6 +409,12 @@ if (PUBLIC || DESKTOP) {
 }
 
 const hostname = PUBLIC ? '0.0.0.0' : '127.0.0.1'
+// A throw nobody caught used to take the whole server down, and with it the
+// app's every page. Said in the log instead; the request that caused it has
+// already failed on its own.
+process.on('uncaughtException', (e) => console.error(`[server] uncaught: ${e?.stack ?? e}`))
+process.on('unhandledRejection', (e) => console.error(`[server] unhandled: ${(e as Error)?.stack ?? e}`))
+
 serve({ fetch: app.fetch, port: PORT, hostname }, () => {
   console.log(
     PUBLIC

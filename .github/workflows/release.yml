@@ -57,6 +57,16 @@ jobs:
       - name: Package
         run: npm run desktop:build:${{ runner.os == 'Windows' && 'win' || 'linux' }}
 
+      # The app runs its server under Electron's own Node, not the runner's:
+      # a native module built for the wrong one only shows up there.
+      - name: Does it run under Electron's node
+        shell: bash
+        env:
+          ELECTRON_RUN_AS_NODE: '1'
+        run: |
+          if [ "${{ runner.os }}" = "Windows" ]; then bin="dist-app/win-unpacked/Alfredo.exe"; else bin="dist-app/linux-unpacked/alfredo"; fi
+          "$bin" scripts/smoke.mjs
+
       - name: Zip it
         shell: bash
         run: |
