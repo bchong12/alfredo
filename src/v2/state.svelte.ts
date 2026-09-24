@@ -151,7 +151,7 @@ export async function loadWorkspaceState(meEmail: string | null) {
   }
   try {
     await loadProjects()
-    const [s, m] = await Promise.all([v2.get<Settings>('/settings'), v2.get<Person[]>('/members')])
+    const [s, m, who] = await Promise.all([v2.get<Settings>('/settings'), v2.get<Person[]>('/members'), v2.get<Person | null>('/me').catch(() => null)])
     if (workspace.activeId !== w) return
     ui.settings = s
     ui.members = m
@@ -159,7 +159,9 @@ export async function loadWorkspaceState(meEmail: string | null) {
     rememberBrand(w, { name: s.name, logo: s.logo })
     rememberFaces(m)
     rememberShell(w, { settings: s, members: m, projects: { enabled: scope.enabled, list: scope.list } })
-    ui.me = (meEmail && m.find((p) => p.email?.toLowerCase() === meEmail.toLowerCase())) || m[0] || null
+    // The database's word first (a Worker knows its session; Supabase its
+    // login); the email second; the first member only where nobody signs in.
+    ui.me = (who && m.find((p) => p.id === who.id)) || (meEmail && m.find((p) => p.email?.toLowerCase() === meEmail.toLowerCase())) || (workspace.list.find((w) => w.id === workspace.activeId)?.kind === 'local' ? m[0] : null) || null
     if (!seen) {
       pickTab()
       ui.item = null

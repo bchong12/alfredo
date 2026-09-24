@@ -1651,6 +1651,15 @@ export function v2Routes(current: () => { workspace: Workspace; db: unknown } | 
     return c.json({ enabled: !!set.projects?.enabled, projects: after.allowed.map((p) => seenBy(p, after.me)), canManage: after.me.admin, me: after.me.id })
   })
   /* Joining: an admin makes a link, the person opens Alfredo and pastes it. */
+  /* Who is asking, as a person in this workspace: what the database says
+     (a Worker's session, a Supabase login matched to its row), so the app
+     never has to guess from a list. Null on a workspace with no sign-in. */
+  app.get('/me', async (c) => {
+    const { me } = await mine(c)
+    if (!me.id) return c.json(null)
+    const people = await store().members()
+    return c.json(people.find((p) => p.id === me.id) ?? null)
+  })
   app.get('/invites', async (c) => {
     const { me } = await mine(c)
     if (!me.admin) return c.json({ error: 'Only an admin can see the invitations.' }, 403)
