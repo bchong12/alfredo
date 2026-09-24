@@ -19,6 +19,7 @@
     "build:desktop-ui": "vite build --mode desktop",
     "desktop:build:mac": "npm run build:desktop-ui && npm run build:server && node scripts/helper.mjs && electron-builder --mac --dir",
     "release:mac": "npm run build:desktop-ui && npm run build:server && node scripts/helper.mjs && node scripts/release-mac.mjs",
+    "ship": "node scripts/ship.mjs",
     "desktop:build:win": "npm run build:desktop-ui && npm run build:server && electron-builder --win --dir",
     "desktop:build:linux": "npm run build:desktop-ui && npm run build:server && electron-builder --linux --dir"
   },
