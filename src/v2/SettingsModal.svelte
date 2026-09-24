@@ -15,6 +15,8 @@
   import ConnectDatabase from './ConnectDatabase.svelte'
   import { PACK_TABS } from './packs'
   import X from '@lucide/svelte/icons/x'
+  import RefreshCw from '@lucide/svelte/icons/refresh-cw'
+  import { update, currentVersion, checkForUpdates, installUpdate } from './updates.svelte'
   import Building from '@lucide/svelte/icons/building'
   import LayoutGrid from '@lucide/svelte/icons/layout-grid'
   import Users from '@lucide/svelte/icons/users'
@@ -49,7 +51,7 @@
   /* On the site there is no machine behind the app: nothing to connect a
      database to, no CLI to reach other apps through, no models on a disk. Those
      pages are the desktop app's. */
-  const MACHINE_ONLY: SettingsPage[] = ['database', 'connections', 'models']
+  const MACHINE_ONLY: SettingsPage[] = ['database', 'connections', 'models', 'updates']
   const ALL_PAGES: { id: SettingsPage; label: string; icon: any; group: 'ws' | 'app' }[] = [
     { id: 'general', label: 'General', icon: Building, group: 'ws' },
     { id: 'tabs', label: 'Tabs', icon: LayoutGrid, group: 'ws' },
@@ -60,6 +62,7 @@
     { id: 'connections', label: 'Connections', icon: Plug, group: 'ws' },
     { id: 'models', label: 'Models', icon: Cpu, group: 'app' },
     { id: 'appearance', label: 'Appearance', icon: Sun, group: 'app' },
+    { id: 'updates', label: 'Updates', icon: RefreshCw, group: 'app' },
   ]
   const PAGES = $derived(workspace.hosted ? ALL_PAGES.filter((p) => !MACHINE_ONLY.includes(p.id)) : ALL_PAGES)
 
@@ -1042,12 +1045,53 @@
             <button class:on={theme.mode === t} onclick={() => applyTheme(t as Theme)}>{t[0].toUpperCase() + t.slice(1)}</button>
           {/each}
         </div>
+      {:else if ui.settingsPage === 'updates'}
+        <section>
+          <div class="dbrow">
+            <div class="dbi"><RefreshCw size={15} /></div>
+            <div class="dbt">
+              <span class="h">Alfredo {currentVersion() || '(development build)'}</span>
+              <span class="s">
+                {#if update.version}Version {update.version} is downloaded and waiting. Restart to use it.
+                {:else if update.doing === 'checking'}Asking the release page…
+                {:else if update.doing === 'downloading'}Downloading {update.last?.version ?? 'the update'}{update.last?.percent != null ? ` · ${update.last.percent}%` : ''}
+                {:else if update.last?.state === 'error'}Could not reach the releases: {update.last.error}
+                {:else if update.last?.state === 'latest'}This is the latest. Last checked {new Date(update.last.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.
+                {:else}Alfredo looks for a newer version when it opens and every four hours, downloads it quietly, and asks before restarting.{/if}
+              </span>
+            </div>
+            {#if update.version}
+              <button class="primary" onclick={installUpdate}>Restart to update</button>
+            {:else}
+              <button class="ghost" disabled={!!update.doing || !currentVersion()} onclick={() => void checkForUpdates()}>{update.doing ? 'Checking…' : 'Check now'}</button>
+            {/if}
+          </div>
+          {#if update.last?.notes}
+            <div class="lab"><b>What is in {update.last.version ?? 'it'}</b></div>
+            <pre class="notes">{update.last.notes}</pre>
+          {/if}
+        </section>
+        <p class="note">Every version is on <a href="https://github.com/bchong12/alfredo/releases" target="_blank" rel="noreferrer">github.com/bchong12/alfredo/releases</a>, with what changed in each.</p>
       {/if}
     </div>
   </div>
 </div>
 
 <style>
+  .notes {
+    margin: 0;
+    padding: 12px 14px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    background: var(--panel);
+    font: inherit;
+    font-size: 12.5px;
+    line-height: 1.55;
+    color: var(--ink-2);
+    white-space: pre-wrap;
+    max-height: 320px;
+    overflow: auto;
+  }
   .scrim {
     position: fixed;
     inset: 0;

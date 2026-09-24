@@ -7,7 +7,7 @@ import { workspace } from '../lib/workspace.svelte'
 import { warmTabs } from './cache'
 
 export type Overlay = null | 'workspaces' | 'account' | 'settings'
-export type SettingsPage = 'general' | 'projects' | 'cycles' | 'tabs' | 'members' | 'database' | 'connections' | 'models' | 'appearance'
+export type SettingsPage = 'general' | 'projects' | 'cycles' | 'tabs' | 'members' | 'database' | 'connections' | 'models' | 'appearance' | 'updates'
 
 export const ui = $state({
   tab: 'board' as string,

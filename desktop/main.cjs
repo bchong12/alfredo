@@ -149,8 +149,19 @@ function setupUpdates() {
   }
   autoUpdater.autoDownload = true
   autoUpdater.autoInstallOnAppQuit = true
-  autoUpdater.on('update-downloaded', (info) => win?.webContents.send('update-ready', { version: info.version }))
-  autoUpdater.on('error', (e) => console.error(`[update] ${e?.message ?? e}`))
+  const tell = (state, more = {}) => win?.webContents.send('update-state', { state, at: Date.now(), ...more })
+  autoUpdater.on('checking-for-update', () => tell('checking'))
+  autoUpdater.on('update-not-available', (info) => tell('latest', { latest: info?.version ?? null }))
+  autoUpdater.on('update-available', (info) => tell('downloading', { version: info.version, notes: typeof info.releaseNotes === 'string' ? info.releaseNotes : '' }))
+  autoUpdater.on('download-progress', (p) => tell('downloading', { percent: Math.round(p.percent) }))
+  autoUpdater.on('update-downloaded', (info) => {
+    tell('ready', { version: info.version, notes: typeof info.releaseNotes === 'string' ? info.releaseNotes : '' })
+    win?.webContents.send('update-ready', { version: info.version })
+  })
+  autoUpdater.on('error', (e) => {
+    console.error(`[update] ${e?.message ?? e}`)
+    tell('error', { error: String(e?.message ?? e) })
+  })
   ipcMain.on('install-update', () => autoUpdater.quitAndInstall())
   ipcMain.handle('check-update', async () => {
     try {
