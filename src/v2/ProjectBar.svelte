@@ -5,7 +5,8 @@
   import Check from '@lucide/svelte/icons/check'
   import Plus from '@lucide/svelte/icons/plus'
   import CircleDashed from '@lucide/svelte/icons/circle-dashed'
-  import { scope, activeProject, liveProjects, projectLabel, NO_PROJECT } from './project.svelte'
+  import UserRound from '@lucide/svelte/icons/user-round'
+  import { scope, activeProject, liveProjects, projectLabel, personalProject, NO_PROJECT } from './project.svelte'
   import { setProject, openSettings } from './state.svelte'
 
   let open = $state(false)
@@ -14,7 +15,7 @@
 
 <div class="wrap">
   <button class="pbar" class:on={open} onclick={() => (open = !open)}>
-    <i class="dot {current?.color ?? 'all'}"></i>
+    {#if current?.personal}<UserRound size={13} />{:else}<i class="dot {current?.color ?? 'all'}"></i>{/if}
     <span class="name">{projectLabel()}</span>
     <ChevronsUpDown size={13} />
   </button>
@@ -24,7 +25,16 @@
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="catch" onclick={() => (open = false)}></div>
     <div class="menu">
-      {#each liveProjects() as p (p.id)}
+      {#if personalProject()}
+        {@const mine = personalProject()!}
+        <!-- Yours: a meeting or a doc that is not the team's goes here. -->
+        <button class="row" onclick={() => ((open = false), setProject(mine.id))}>
+          <UserRound size={13} /><span class="grow">Personal</span>
+          {#if scope.id === mine.id}<Check size={13} />{/if}
+        </button>
+        <div class="line"></div>
+      {/if}
+      {#each liveProjects().filter((p) => !p.personal) as p (p.id)}
         <button class="row" onclick={() => ((open = false), setProject(p.id))}>
           <i class="dot {p.color}"></i>
           <span class="grow">{p.name}</span>

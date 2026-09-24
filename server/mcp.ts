@@ -218,7 +218,10 @@ connecting a database, and never repeat back tokens or keys.`,
     async () => {
       const s = ws()
       const [set, list] = await Promise.all([s.settings(), s.projects()])
-      return ok({ enabled: !!set.projects?.enabled, projects: list })
+      // Personal projects are one person's own; a connection with no person
+      // behind it is handed none of them.
+      const personal = new Set(Object.values(set.personal ?? {}))
+      return ok({ enabled: !!set.projects?.enabled, projects: list.filter((p) => !personal.has(p.id)) })
     },
   )
 

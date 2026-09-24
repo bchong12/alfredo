@@ -14,6 +14,8 @@ export type Project = {
   role?: ProjectRole | null
   /** Who is in it. Only admins are told. */
   members?: ProjectMember[]
+  /** Yours alone: made for you when you first opened a shared workspace. */
+  personal?: boolean
 }
 
 /** The colours a project can take. Same list the server accepts. */
@@ -67,6 +69,9 @@ export const myRole = (): ProjectRole => {
 }
 export const canEditHere = () => myRole() !== 'read'
 export const liveProjects = () => scope.list.filter((p) => !p.archived)
+/** The team's projects: what an admin names, shares and edits. Not the personal ones. */
+export const teamProjects = () => scope.list.filter((p) => !p.personal)
+export const personalProject = () => scope.list.find((p) => p.personal) ?? null
 
 const KEY = (ws: string) => `alfredo.v2.project.${ws}`
 

@@ -68,7 +68,16 @@ export function tabsProblem(tabs: unknown): string | null {
 export const PACK_KEY = /^[a-z][a-z0-9-]*(\.[a-z0-9-]+)*$/
 export type Cycles = { length: 1 | 2 | 4; rollover: 'ask' | 'next' | 'backlog'; upcoming: number; since?: string }
 export const DEFAULT_CYCLES: Cycles = { length: 1, rollover: 'ask', upcoming: 1 }
-export type Settings = { name?: string; logo?: string | null; tabs: TabDef[]; cycles?: Cycles; projects?: { enabled: boolean } }
+export type Settings = {
+  name?: string
+  logo?: string | null
+  tabs: TabDef[]
+  cycles?: Cycles
+  projects?: { enabled: boolean }
+  /** Each person's own project, by person id: made for them the first time
+   *  they open a shared workspace (see mine()), and theirs alone. */
+  personal?: Record<string, string>
+}
 
 /**
  * Projects split one workspace (and its one database) into separate boards,
@@ -89,6 +98,8 @@ export type Project = {
   members: ProjectMember[]
   /** Set when the database decided this itself, and then it is the answer. */
   role?: ProjectRole | null
+  /** Whose personal project this is. Only ever handed to that person. */
+  personal?: string
 }
 /** An invitation to join the workspace, and the projects it puts someone in. */
 export type Invite = {
@@ -328,6 +339,7 @@ class SqlStore implements Store {
       tabs: map.tabs ?? DEFAULT_TABS,
       cycles: { ...DEFAULT_CYCLES, ...(map.cycles ?? {}) },
       projects: { enabled: !!map.project_settings?.enabled },
+      ...(map.personal ? { personal: map.personal } : {}),
     }
   }
   async saveSettings(s: Partial<Settings>) {
@@ -335,6 +347,7 @@ class SqlStore implements Store {
     if (s.projects) await q(db.from('workspace_settings').upsert({ key: 'project_settings', value: { enabled: !!s.projects.enabled }, updated_at: new Date().toISOString() }))
     if (s.tabs) await q(db.from('workspace_settings').upsert({ key: 'tabs', value: s.tabs, updated_at: new Date().toISOString() }))
     if (s.cycles) await q(db.from('workspace_settings').upsert({ key: 'cycles', value: s.cycles, updated_at: new Date().toISOString() }))
+    if (s.personal) await q(db.from('workspace_settings').upsert({ key: 'personal', value: s.personal, updated_at: new Date().toISOString() }))
     if (s.name !== undefined || s.logo !== undefined) {
       await q(
         db.from('workspace_settings').upsert({
@@ -793,7 +806,14 @@ class CloudflareStore implements Store {
 
   async settings(): Promise<Settings> {
     const s = await this.raw()
-    return { name: s.name ?? this.ws.name, logo: s.logo ?? null, tabs: s.tabs ?? DEFAULT_TABS, cycles: { ...DEFAULT_CYCLES, ...(s.cycles ?? {}) }, projects: { enabled: !!s.projectSettings?.enabled } }
+    return {
+      name: s.name ?? this.ws.name,
+      logo: s.logo ?? null,
+      tabs: s.tabs ?? DEFAULT_TABS,
+      cycles: { ...DEFAULT_CYCLES, ...(s.cycles ?? {}) },
+      projects: { enabled: !!s.projectSettings?.enabled },
+      ...(s.personal ? { personal: s.personal } : {}),
+    }
   }
   async saveSettings(patch: Partial<Settings>) {
     const cur = await this.raw()
@@ -803,6 +823,7 @@ class CloudflareStore implements Store {
     if (patch.tabs !== undefined) next.tabs = patch.tabs
     if (patch.cycles !== undefined) next.cycles = patch.cycles
     if (patch.projects !== undefined) next.projectSettings = { enabled: !!patch.projects.enabled }
+    if (patch.personal !== undefined) next.personal = patch.personal
     await this.writeRaw(next)
     return this.settings()
   }
@@ -1483,11 +1504,46 @@ export function v2Routes(current: () => { workspace: Workspace; db: unknown } | 
     const mine = people.find((p) => p.email?.toLowerCase() === person.email.toLowerCase())
     return { id: mine?.id ?? null, admin: !settled || mine?.role === 'admin' }
   }
-  /** The projects this person may open, and what they may do in each. */
+  /**
+   * The projects this person may open, and what they may do in each.
+   *
+   * In a shared workspace everyone also has a project of their own, made here
+   * the first time they open it: somewhere for a meeting or a doc that is
+   * theirs rather than the team's. It is theirs alone: nobody else is handed
+   * it, admins included (in the app; the database itself still belongs to
+   * whoever runs it). Projects come on with it, so "All projects" is the team
+   * and "Personal" is you.
+   */
   async function mine(c: any) {
-    const [list, me] = await Promise.all([store().projects(), who(c)])
+    const st = store()
+    const [raw, me, set] = await Promise.all([st.projects(), who(c), st.settings()])
+    const owners = new Map(Object.entries(set.personal ?? {}).map(([person, project]) => [project, person]))
+    let list: Project[] = raw.map((p) => (owners.has(p.id) ? { ...p, personal: owners.get(p.id)! } : p)).filter((p) => !p.personal || p.personal === me.id)
+    const shared = (current()?.workspace.kind ?? 'local') !== 'local'
+    if (shared && me.id && !list.some((p) => p.personal === me.id)) {
+      const made = await makePersonal(st, me.id, raw, set)
+      if (made) list = [...list, made]
+    }
     const allowed = list.filter((p) => canOpenProject(p, me))
     return { me, all: list, allowed, roleOf: (id: string) => projectRole(list.find((p) => p.id === id) ?? ({ members: [] } as any), me) }
+  }
+  const making = new Map<string, Promise<Project | null>>()
+  function makePersonal(st: Store, person: string, all: Project[], set: Settings) {
+    const key = `${current()?.workspace.id ?? ''}|${person}`
+    const going = making.get(key)
+    if (going) return going
+    const job = (async () => {
+      const p: Project = { id: randomUUID(), name: 'Personal', color: 'slate', members: [{ personId: person, role: 'admin' }] }
+      await st.saveProjects([...all, p])
+      const latest = await st.settings()
+      await st.saveSettings({ personal: { ...(latest.personal ?? {}), [person]: p.id }, ...(set.projects?.enabled ? {} : { projects: { enabled: true } }) })
+      whoCache.clear()
+      return { ...p, personal: person }
+    })()
+      .catch(() => null)
+      .finally(() => making.delete(key))
+    making.set(key, job)
+    return job
   }
   /** What a project looks like to the person asking: their role, and the people in it when they run it. */
   const seenBy = (p: Project, me: Viewer) => ({
@@ -1495,6 +1551,7 @@ export function v2Routes(current: () => { workspace: Workspace; db: unknown } | 
     name: p.name,
     color: p.color,
     ...(p.archived ? { archived: true } : {}),
+    ...(p.personal ? { personal: true } : {}),
     role: projectRole(p, me),
     members: me.admin ? p.members : undefined,
   })
@@ -1527,6 +1584,9 @@ export function v2Routes(current: () => { workspace: Workspace; db: unknown } | 
           .map((m: any) => ({ personId: m.personId as string, role: (PROJECT_ROLES.includes(m.role) ? m.role : 'write') as ProjectRole }))
         next.push({ id: x.id || randomUUID(), name, color: PROJECT_COLORS.includes(x.color ?? '') ? x.color! : 'slate', members, ...(x.archived ? { archived: true } : {}) })
       }
+      // Personal projects are not on the list an admin edits; they stay as they are.
+      const personal = new Set(Object.values((await st.settings()).personal ?? {}))
+      for (const p of before) if (personal.has(p.id) && !next.some((n) => n.id === p.id)) next.push(p)
       // A deleted project lets go of its items; they stay, in no project.
       const gone = new Set(before.filter((p) => !next.some((n) => n.id === p.id)).map((p) => p.id))
       if (gone.size) {

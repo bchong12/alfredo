@@ -67,7 +67,7 @@
   let projects = $state<Project[]>([])
   let newProject = $state('')
   $effect(() => {
-    projects = scope.list.map((p) => ({ ...p }))
+    projects = scope.list.filter((p) => !p.personal).map((p) => ({ ...p }))
   })
   async function saveProjects(list: Project[], enabled?: boolean) {
     try {
@@ -76,7 +76,7 @@
       scope.list = r.projects
       scope.canManage = !!r.canManage
       if (scope.id && !r.projects.some((p) => p.id === scope.id && !p.archived)) setProject(null)
-      projects = r.projects.map((p) => ({ ...p }))
+      projects = r.projects.filter((p) => !p.personal).map((p) => ({ ...p }))
     } catch (e) {
       fail(e)
     }
