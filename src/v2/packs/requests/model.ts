@@ -1,7 +1,7 @@
 // Requests: what people ask of a product, bugs and ideas both, with votes,
 // a status, and the card it became. One board per product, kept as pack
 // data "requests.<product>" so it works on every kind of database, an agent
-// reads it with get_pack_data, and a public form (the Peach portal) can
+// reads it with get_pack_data, and a public form (a team's own portal) can
 // append to it through the workspace's own Worker. Which products exist is
 // "requests.settings".
 
