@@ -174,9 +174,19 @@ function setupUpdates() {
       return { error: e?.message ?? String(e) }
     }
   })
-  const look = () => autoUpdater.checkForUpdates().catch(() => {})
+  // Soon after launch, every half hour, and whenever the window comes back
+  // to the front (no oftener than every ten minutes): a new version should
+  // reach people within the hour, not by tomorrow.
+  let lookedAt = 0
+  const look = () => {
+    lookedAt = Date.now()
+    autoUpdater.checkForUpdates().catch(() => {})
+  }
   setTimeout(look, 15_000)
-  setInterval(look, 4 * 60 * 60_000)
+  setInterval(look, 30 * 60_000)
+  app.on('browser-window-focus', () => {
+    if (Date.now() - lookedAt > 10 * 60_000) look()
+  })
 }
 
 /*

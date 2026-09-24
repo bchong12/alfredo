@@ -1059,7 +1059,7 @@
                 {:else if update.last?.state === 'unmanaged'}This copy was built and installed by hand, so it does not update itself. The next one you install from the releases page will.
                 {:else if update.last?.state === 'error'}Could not reach the releases: {update.last.error}
                 {:else if update.last?.state === 'latest'}This is the latest. Last checked {new Date(update.last.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.
-                {:else}Alfredo looks for a newer version when it opens and every four hours, downloads it quietly, and asks before restarting.{/if}
+                {:else}Alfredo looks for a newer version when it opens, every half hour, and when the window comes back to the front; downloads it quietly, and asks before restarting.{/if}
               </span>
             </div>
             {#if update.version}
