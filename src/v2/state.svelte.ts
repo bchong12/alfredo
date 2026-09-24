@@ -90,6 +90,23 @@ export async function loadProjects() {
   recallProject(w)
 }
 
+/**
+ * Ask the database again for what is on screen. The lists are cached, so a
+ * teammate's change shows when a page is next opened, not while it sits
+ * there; this is the way to ask now. The tab on screen is remade.
+ */
+export const refreshing = $state({ at: 0, busy: false })
+export async function refreshWorkspace() {
+  refreshing.at = Date.now()
+  refreshing.busy = true
+  ui.refreshed++
+  try {
+    if (workspace.activeId) await loadWorkspaceState(ui.me?.email ?? null)
+  } finally {
+    setTimeout(() => (refreshing.busy = false), 600)
+  }
+}
+
 export function openSettings(page: SettingsPage = 'general') {
   ui.settingsPage = page
   ui.overlay = 'settings'

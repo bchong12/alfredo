@@ -14,7 +14,7 @@
  * start.
  */
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 if (process.platform !== 'darwin') {
@@ -51,6 +51,16 @@ rmSync(staging, { recursive: true, force: true });
 if (!run('cp', ['-R', built, staging])) process.exit(1);
 rmSync(installed, { recursive: true, force: true });
 if (!run('mv', [staging, installed])) process.exit(1);
+
+/* A dir build carries no update manifest (only a packaged one does); without
+   it the app cannot look for newer versions. Written here from package.json,
+   so an install made this way updates like one from the releases page. */
+try {
+  const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
+  const pub = pkg.build?.publish?.[0];
+  const manifest = join(installed, 'Contents', 'Resources', 'app-update.yml');
+  if (pub && !existsSync(manifest)) writeFileSync(manifest, `owner: ${pub.owner}\nrepo: ${pub.repo}\nprovider: ${pub.provider}\nupdaterCacheDirName: ${pkg.name}-updater\n`);
+} catch {}
 
 /* Before anything opens it, so the Dock asks about this bundle and not the
    one that used to be here. */

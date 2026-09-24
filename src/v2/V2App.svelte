@@ -24,7 +24,7 @@
   import X from '@lucide/svelte/icons/x'
   import { untrack } from 'svelte'
   import { scope } from './project.svelte'
-  import { ui, visibleTabs, loadWorkspaceState, openSettings, packView } from './state.svelte'
+  import { ui, visibleTabs, loadWorkspaceState, openSettings, packView, refreshWorkspace, refreshing } from './state.svelte'
   import { workspace, activeWorkspace, loadWorkspaces } from '../lib/workspace.svelte'
   import { auth, boot } from '../lib/session.svelte'
   import { net } from './net.svelte'
@@ -105,22 +105,11 @@
     })
   })
 
-  /*
-   * Refresh: ask the database again for what is on screen. The lists are
-   * cached, so someone else's change shows up when a page is next opened,
-   * not while it sits there; this is the way to ask now. ⌘R, the workspace
-   * menu, and the app itself when the window comes back to the front or
-   * after a minute of nothing open (never while something is being edited).
-   */
-  let refreshedAt = 0
-  function refreshWorkspace() {
-    refreshedAt = Date.now()
-    ui.refreshed++
-    if (workspace.activeId) untrack(() => loadWorkspaceState(email))
-  }
+  // The app refreshes by itself when the window comes back to the front, or
+  // after a minute with nothing open; never while something is being edited.
   const quietRefresh = () => {
-    if (ui.item || ui.overlay || document.hidden || Date.now() - refreshedAt < 20_000) return
-    refreshWorkspace()
+    if (ui.item || ui.overlay || document.hidden || Date.now() - refreshing.at < 20_000) return
+    void refreshWorkspace()
   }
   $effect(() => {
     const onFocus = () => quietRefresh()
@@ -138,7 +127,7 @@
     const mod = e.metaKey || e.ctrlKey
     if (mod && e.key === 'r') {
       e.preventDefault()
-      refreshWorkspace()
+      void refreshWorkspace()
     } else if (mod && e.key === 'k') {
       e.preventDefault()
       searching = true
@@ -194,10 +183,6 @@
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div class="catch" onclick={() => (ui.overlay = null)}></div>
       <WorkspaceMenu
-        onrefresh={() => {
-          ui.overlay = null
-          refreshWorkspace()
-        }}
         onadd={() => {
           ui.overlay = null
           adding = true

@@ -2,13 +2,12 @@
   import Check from '@lucide/svelte/icons/check'
   import Plus from '@lucide/svelte/icons/plus'
   import Settings from '@lucide/svelte/icons/settings'
-  import RefreshCw from '@lucide/svelte/icons/refresh-cw'
   import WorkspaceMark from './WorkspaceMark.svelte'
   import { workspace, pick } from '../lib/workspace.svelte'
   import { ui, openSettings } from './state.svelte'
   import { brandOf } from './remembered.svelte'
 
-  let { onadd, onrefresh }: { onadd: () => void; onrefresh: () => void } = $props()
+  let { onadd }: { onadd: () => void } = $props()
 
   const where = (k: string) => (k === 'remote' ? 'Supabase' : k === 'cloudflare' ? 'Cloudflare' : 'This Mac')
 </script>
@@ -31,7 +30,6 @@
     </button>
   {/each}
   <div class="sep"></div>
-  <button class="item act" role="menuitem" onclick={onrefresh}><span class="ico"><RefreshCw size={14} /></span>Refresh<kbd>⌘R</kbd></button>
   {#if !workspace.hosted}<button class="item act" role="menuitem" onclick={onadd}><span class="ico"><Plus size={14} /></span>Add workspace</button>{/if}
   <button class="item act" role="menuitem" onclick={() => openSettings('general')}><span class="ico"><Settings size={14} /></span>Workspace settings</button>
 </div>

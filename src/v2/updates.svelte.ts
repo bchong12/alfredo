@@ -14,7 +14,7 @@ declare global {
   }
 }
 
-export type UpdateState = { state: 'checking' | 'latest' | 'downloading' | 'ready' | 'error'; at: number; version?: string; latest?: string | null; percent?: number; notes?: string; error?: string }
+export type UpdateState = { state: 'checking' | 'latest' | 'downloading' | 'ready' | 'error' | 'unmanaged'; at: number; version?: string; latest?: string | null; percent?: number; notes?: string; error?: string }
 
 export const update = $state<{
   /** A newer Alfredo, downloaded and waiting. */

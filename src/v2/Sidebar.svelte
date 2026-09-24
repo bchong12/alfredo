@@ -12,9 +12,10 @@
   import ProjectBar from './ProjectBar.svelte'
   import Face from './Face.svelte'
   import ChevronRight from '@lucide/svelte/icons/chevron-right'
-  import { ui, visibleTabs, go, openPack, packView } from './state.svelte'
+  import { ui, visibleTabs, go, openPack, packView, refreshWorkspace, refreshing } from './state.svelte'
   import { PACK_TABS } from './packs'
   import Download from '@lucide/svelte/icons/download'
+  import RefreshCw from '@lucide/svelte/icons/refresh-cw'
   import { activeWorkspace, workspace } from '../lib/workspace.svelte'
   import { scope } from './project.svelte'
   import { brandOf } from './remembered.svelte'
@@ -74,6 +75,9 @@
 
   <div class="spacer"></div>
 
+  <!-- Ask the database again for what is on screen. Quiet, and out of the way. -->
+  <button class="refresh" class:busy={refreshing.busy} title="Refresh (⌘R)" aria-label="Refresh" onclick={() => void refreshWorkspace()}><RefreshCw size={12} /></button>
+
   {#if workspace.hosted}
     <!-- The site is the same workspace with less in it: nothing here records,
          reads in, or talks to an agent. Say so where the tabs end. -->
@@ -128,6 +132,32 @@
   .switcher {
     border: 1px solid var(--line);
     background: var(--bg);
+  }
+  .refresh {
+    align-self: flex-end;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    margin: 0 2px 4px 0;
+    border-radius: 6px;
+    border: 0;
+    background: none;
+    color: var(--line-strong);
+    cursor: pointer;
+  }
+  .refresh:hover {
+    color: var(--ink-2);
+    background: var(--accent-soft);
+  }
+  .refresh.busy :global(svg) {
+    animation: turn 0.9s linear infinite;
+  }
+  @keyframes turn {
+    to {
+      transform: rotate(360deg);
+    }
   }
   .getapp {
     display: flex;

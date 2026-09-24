@@ -159,8 +159,11 @@ function setupUpdates() {
     win?.webContents.send('update-ready', { version: info.version })
   })
   autoUpdater.on('error', (e) => {
-    console.error(`[update] ${e?.message ?? e}`)
-    tell('error', { error: String(e?.message ?? e) })
+    const msg = String(e?.message ?? e)
+    console.error(`[update] ${msg}`)
+    // No app-update.yml: a build made by hand (npm run desktop:install), not from a release.
+    if (/app-update\.yml/.test(msg)) return tell('unmanaged')
+    tell('error', { error: msg })
   })
   ipcMain.on('install-update', () => autoUpdater.quitAndInstall())
   ipcMain.handle('check-update', async () => {

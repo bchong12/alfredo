@@ -1055,6 +1055,7 @@
                 {#if update.version}Version {update.version} is downloaded and waiting. Restart to use it.
                 {:else if update.doing === 'checking'}Asking the release page…
                 {:else if update.doing === 'downloading'}Downloading {update.last?.version ?? 'the update'}{update.last?.percent != null ? ` · ${update.last.percent}%` : ''}
+                {:else if update.last?.state === 'unmanaged'}This copy was built and installed by hand, so it does not update itself. The next one you install from the releases page will.
                 {:else if update.last?.state === 'error'}Could not reach the releases: {update.last.error}
                 {:else if update.last?.state === 'latest'}This is the latest. Last checked {new Date(update.last.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.
                 {:else}Alfredo looks for a newer version when it opens and every four hours, downloads it quietly, and asks before restarting.{/if}
