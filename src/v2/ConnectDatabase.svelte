@@ -15,7 +15,11 @@
 
   let { onconnected }: { onconnected: (id: string) => void } = $props()
 
+  import SetupGuide from './SetupGuide.svelte'
+  import CircleHelp from '@lucide/svelte/icons/circle-help'
+
   type Mode = null | 'local' | 'supabase' | 'cloudflare' | 'invite'
+  let guide = $state<'supabase' | 'cloudflare' | null>(null)
   type Project = { ref: string; name: string; region: string; status: string }
   type Job = { step: string; log: string[]; error?: string; workspaceId: string | null }
 
@@ -200,9 +204,12 @@
           <button class="primary" disabled={busy} onclick={checkAgain}>{busy ? 'Checking…' : 'Check again'}</button>
         </div>
       {:else}
-        <div class="seg">
-          <button class:on={how === 'token'} onclick={() => ((how = 'token'), (err = ''))}>Access token</button>
-          <button class:on={how === 'keys'} onclick={() => ((how = 'keys'), (err = ''))}>Project keys</button>
+        <div class="segrow">
+          <div class="seg">
+            <button class:on={how === 'token'} onclick={() => ((how = 'token'), (err = ''))}>Access token</button>
+            <button class:on={how === 'keys'} onclick={() => ((how = 'keys'), (err = ''))}>Project keys</button>
+          </div>
+          <button class="how" onclick={() => (guide = 'supabase')}><CircleHelp size={13} /> How do I set this up?</button>
         </div>
         {#if how === 'token'}
           <p class="lead">
@@ -244,9 +251,12 @@
         </ol>
         {#if job.log.length}<p class="mono">{job.log[job.log.length - 1]}</p>{/if}
       {:else}
-        <div class="seg">
-          <button class:on={cfHow === 'create'} onclick={() => ((cfHow = 'create'), (err = ''))}>Create new</button>
-          <button class:on={cfHow === 'existing'} onclick={() => ((cfHow = 'existing'), (err = ''))}>Connect existing</button>
+        <div class="segrow">
+          <div class="seg">
+            <button class:on={cfHow === 'create'} onclick={() => ((cfHow = 'create'), (err = ''))}>Create new</button>
+            <button class:on={cfHow === 'existing'} onclick={() => ((cfHow = 'existing'), (err = ''))}>Connect existing</button>
+          </div>
+          <button class="how" onclick={() => (guide = 'cloudflare')}><CircleHelp size={13} /> How do I set this up?</button>
         </div>
         {#if cfHow === 'create'}
           <p class="lead">Alfredo creates a D1 database and a small Worker in your Cloudflare account with your own wrangler login, then keeps the Worker's token in this Mac's keychain. Free tier is plenty.</p>
@@ -270,8 +280,30 @@
     {#if err}<p class="err">{err}</p>{/if}
   {/if}
 </div>
+{#if guide}<SetupGuide kind={guide} onclose={() => (guide = null)} />{/if}
 
 <style>
+  .segrow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .how {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: none;
+    border: 0;
+    padding: 0;
+    font: inherit;
+    font-size: 12px;
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .how:hover {
+    color: var(--ink);
+  }
   .connect {
     display: flex;
     flex-direction: column;
