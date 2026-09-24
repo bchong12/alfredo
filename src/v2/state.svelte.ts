@@ -73,9 +73,10 @@ export async function refreshProjects() {
 export async function loadProjects() {
   const w = workspace.activeId
   try {
-    const r = await v2.get<{ enabled: boolean; projects: Project[]; canManage?: boolean; me?: string | null }>('/projects')
+    const r = await v2.get<{ enabled: boolean; projects: Project[]; canManage?: boolean; canWrite?: boolean; me?: string | null }>('/projects')
     scope.enabled = r.enabled
     scope.list = r.projects ?? []
+    scope.canWrite = r.canWrite ?? true
     scope.canManage = !!r.canManage
     scope.meId = r.me ?? null
   } catch {

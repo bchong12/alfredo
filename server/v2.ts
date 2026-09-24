@@ -1413,15 +1413,17 @@ export function v2Routes(current: () => { workspace: Workspace; db: unknown } | 
     const p = projectOf(c)
     const [map, { me, allowed }, set] = await Promise.all([mapOf(store()), mine(c), store().settings()])
     const ok = new Set(allowed.map((x) => x.id))
-    // Without projects a workspace is one room. With them, you see yours, and
-    // work that is in none waits for an admin to file it.
-    const unfiledIsMine = !set.projects?.enabled || me.admin
+    // Without projects a workspace is one room. With them, a project is its
+    // own room and the work in none is the room everyone shares: the team's,
+    // the way it was before there were projects (and every shared workspace
+    // has them now, for the personal ones).
+    void set
     return list
       .filter((x) => {
         const inP = map[`${kind}:${x.id}`]
         if (p === NO_PROJECT) return !inP
         if (p) return inP === p
-        return inP ? ok.has(inP) : unfiledIsMine
+        return inP ? ok.has(inP) : true
       })
       .map((x) => ({ ...x, project: map[`${kind}:${x.id}`] ?? null }))
   }
@@ -1603,11 +1605,13 @@ export function v2Routes(current: () => { workspace: Workspace; db: unknown } | 
 
   app.get('/projects', async (c) => {
     const st = store()
-    const [set, { me, allowed }] = await Promise.all([st.settings(), mine(c)])
+    const [set, { me, allowed }, people] = await Promise.all([st.settings(), mine(c), store().members()])
     return c.json({
       enabled: !!set.projects?.enabled,
       projects: allowed.map((p) => seenBy(p, me)),
       canManage: me.admin,
+      // Whether the shared room (work in no project) takes this person's edits.
+      canWrite: me.admin || (people.find((m) => m.id === me.id)?.role ?? 'member') !== 'viewer',
       me: me.id,
     })
   })

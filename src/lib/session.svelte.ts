@@ -158,15 +158,27 @@ export async function signOut() {
   auth.session = null
 }
 
+/**
+ * A 401 means the session this request carried is no good. Only that one:
+ * switching workspaces, a request can leave with no session (or the last
+ * workspace's) and come back after the right one has been found, and that
+ * answer used to sign the person out of the workspace they had just entered.
+ */
+function expired(sent: string | null) {
+  const now = auth.session?.access_token ?? null
+  if (sent && sent === now) auth.session = null
+}
+
 /** POST for the REST API. Same session handling as api(). */
 export async function post<T>(path: string, body: unknown, method = 'POST', extra: Record<string, string> = {}): Promise<T> {
+  const sent = auth.session?.access_token ?? null
   const r = await fetch(apiUrl(path), {
     method,
     headers: { 'Content-Type': 'application/json', ...apiHeaders(), ...extra },
     body: JSON.stringify(body),
   })
   if (r.status === 401) {
-    auth.session = null
+    expired(sent)
     throw new Error('session expired')
   }
   if (!r.ok) {
@@ -178,9 +190,10 @@ export async function post<T>(path: string, body: unknown, method = 'POST', extr
 
 /** fetch for the REST API, carrying the session and handling its expiry. */
 export async function api<T>(path: string, extra: Record<string, string> = {}): Promise<T> {
+  const sent = auth.session?.access_token ?? null
   const r = await fetch(apiUrl(path), { headers: { ...apiHeaders(), ...extra } })
   if (r.status === 401) {
-    auth.session = null
+    expired(sent)
     throw new Error('session expired')
   }
   if (!r.ok) throw new Error(`${path} failed (${r.status})`)

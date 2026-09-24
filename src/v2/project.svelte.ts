@@ -27,13 +27,15 @@ export const scope = $state({
   list: [] as Project[],
   /** Whether this person may add projects and decide who is in them. */
   canManage: false,
+  /** Whether the shared room (work in no project) takes this person's edits. */
+  canWrite: true,
   /** This person's id in the workspace, for reading the member lists. */
   meId: null as string | null,
   /** A project id, 'none' for work in no project, or null for all of it. */
   id: null as string | null,
 })
 
-/** The work that is in no project. Only admins are offered it, to file old work. */
+/** The work that is in no project: the room everyone shares. Admins are offered it on its own, to file old work. */
 export const NO_PROJECT = 'none'
 /** Whether something in `project` belongs in the list on screen: everything
  *  does with no project open, only its own does inside one, and only the
@@ -64,8 +66,9 @@ export const projectLabel = () => (scope.id === NO_PROJECT ? 'Unfiled' : (active
 /** What you may do where you are: a project's role, or the workspace's when nothing is open. */
 export const myRole = (): ProjectRole => {
   if (!scope.enabled) return 'write'
-  if (scope.id === NO_PROJECT) return scope.canManage ? 'admin' : 'read'
-  return activeProject()?.role ?? (scope.canManage ? 'admin' : 'read')
+  // Inside a project, its say; in the shared room, the workspace's.
+  if (scope.id && scope.id !== NO_PROJECT) return activeProject()?.role ?? (scope.canManage ? 'admin' : 'read')
+  return scope.canManage ? 'admin' : scope.canWrite ? 'write' : 'read'
 }
 export const canEditHere = () => myRole() !== 'read'
 export const liveProjects = () => scope.list.filter((p) => !p.archived)
