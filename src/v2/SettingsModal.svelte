@@ -17,6 +17,7 @@
   import X from '@lucide/svelte/icons/x'
   import RefreshCw from '@lucide/svelte/icons/refresh-cw'
   import { update, currentVersion, checkForUpdates, installUpdate } from './updates.svelte'
+  import { tidyHtml } from './tidy-html'
   import Building from '@lucide/svelte/icons/building'
   import LayoutGrid from '@lucide/svelte/icons/layout-grid'
   import Users from '@lucide/svelte/icons/users'
@@ -1069,7 +1070,7 @@
           </div>
           {#if update.last?.notes}
             <div class="lab"><b>What is in {update.last.version ?? 'it'}</b></div>
-            <pre class="notes">{update.last.notes}</pre>
+            <div class="notes">{@html tidyHtml(update.last.notes)}</div>
           {/if}
         </section>
         <p class="note">Every version is on <a href="https://github.com/bchong12/alfredo/releases" target="_blank" rel="noreferrer">github.com/bchong12/alfredo/releases</a>, with what changed in each.</p>
@@ -1081,17 +1082,50 @@
 <style>
   .notes {
     margin: 0;
-    padding: 12px 14px;
+    padding: 4px 14px;
     border: 1px solid var(--line);
     border-radius: var(--r-md);
     background: var(--panel);
-    font: inherit;
     font-size: 12.5px;
     line-height: 1.55;
     color: var(--ink-2);
-    white-space: pre-wrap;
     max-height: 320px;
     overflow: auto;
+  }
+  .notes :global(p),
+  .notes :global(ul),
+  .notes :global(ol),
+  .notes :global(table) {
+    margin: 10px 0;
+  }
+  .notes :global(strong) {
+    color: var(--ink);
+    font-weight: 600;
+  }
+  .notes :global(code) {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    padding: 1px 5px;
+    border-radius: 4px;
+    background: var(--raised);
+    color: var(--ink);
+  }
+  .notes :global(li) {
+    margin: 4px 0 4px 18px;
+  }
+  .notes :global(table) {
+    border-collapse: collapse;
+    width: 100%;
+  }
+  .notes :global(td),
+  .notes :global(th) {
+    text-align: left;
+    padding: 6px 8px 6px 0;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+  .notes :global(a) {
+    color: var(--ink);
   }
   .scrim {
     position: fixed;
