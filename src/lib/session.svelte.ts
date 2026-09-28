@@ -3,6 +3,7 @@
 
 import { createClient, type SupabaseClient, type Session } from '@supabase/supabase-js'
 import { workspace } from './workspace.svelte'
+import { embed, listenToApp, embedExpired } from '../v2/embed.svelte'
 
 /**
  * Empty in development, where Vite proxies /api and /config to the local
@@ -55,6 +56,8 @@ async function getClient() {
   return c
 }
 
+let listening = false
+
 /** True once /config says a Supabase project exists to sign in to. */
 export const remote = $state({ available: false })
 
@@ -62,6 +65,19 @@ export const remote = $state({ available: false })
 export async function boot() {
   const ws = workspace.activeId
   client = null
+  if (embed.on) {
+    // Framed by the desktop app, which hands over the session it has. It is
+    // kept in memory only and never renewed here: the app holds the keys.
+    remote.available = true
+    if (!listening) {
+      listening = true
+      listenToApp((s) => (auth.session = s))
+    }
+    for (let i = 0; i < 25 && !auth.session; i++) await new Promise((r) => setTimeout(r, 100))
+    auth.for = ws
+    auth.ready = true
+    return
+  }
   try {
     const c = await getClient()
     remote.available = true
@@ -166,7 +182,11 @@ export async function signOut() {
  */
 function expired(sent: string | null) {
   const now = auth.session?.access_token ?? null
-  if (sent && sent === now) auth.session = null
+  if (sent && sent === now) {
+    auth.session = null
+    // Framed: the app has a newer one, or will in a moment.
+    embedExpired()
+  }
 }
 /** Whether the session this request carried is still the one we have. */
 const stale = (sent: string | null) => sent !== (auth.session?.access_token ?? null)

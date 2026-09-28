@@ -159,7 +159,7 @@ export interface Store {
   cardsIn(weeks: string[] | 'backlog'): Promise<Card[]>
   /** Move cards to a week (its Monday) or to the backlog (null). */
   moveCards(ids: string[], week: string | null): Promise<void>
-  createCard(c: { title: string; status?: Status; week?: WeekRef }): Promise<Card>
+  createCard(c: { title: string; status?: Status; week?: WeekRef; assigneeId?: string | null; position?: number }): Promise<Card>
   updateCard(id: string, patch: Partial<{ title: string; body: string; status: Status; assigneeId: string | null; position: number; week: WeekRef }>): Promise<Card>
   deleteCard(id: string): Promise<void>
   docs(): Promise<DocSummary[]>
@@ -473,11 +473,15 @@ class SqlStore implements Store {
     const [row, { cols, people, weeks }] = await Promise.all([q<any>(db.from('cards').select('*').eq('id', id).single()), this.lookups()])
     return this.shape(row, cols, people, weeks)
   }
-  async createCard(c: { title: string; status?: Status; week?: WeekRef }) {
+  async createCard(c: { title: string; status?: Status; week?: WeekRef; assigneeId?: string | null; position?: number }) {
     const col = await this.columnFor(c.status ?? 'todo')
     const w = c.week === 'backlog' ? null : await this.weekRow(c.week ?? mondayOf(localToday()))
     const row = await q<any>(
-      db.from('cards').insert({ title: c.title, column_id: col.id, position: Date.now() / 1e6, week_id: w?.id ?? null }).select('*').single(),
+      db
+        .from('cards')
+        .insert({ title: c.title, column_id: col.id, position: c.position ?? Date.now() / 1e6, week_id: w?.id ?? null, ...(c.assigneeId ? { assignee_id: c.assigneeId } : {}) })
+        .select('*')
+        .single(),
     )
     return this.one(row.id)
   }
@@ -860,8 +864,15 @@ class CloudflareStore implements Store {
     const cur = await this.raw()
     await this.writeRaw({ ...cur, taskWeeks: { ...(cur.taskWeeks ?? {}), ...patch } })
   }
+  /** Where each task sits in its column. A task there has no order of its own
+   *  either, so it is kept beside the weeks; one never dragged keeps the
+   *  order the Worker lists it in. */
+  private async placeOrder(patch: Record<string, number>) {
+    const cur = await this.raw()
+    await this.writeRaw({ ...cur, taskOrder: { ...(cur.taskOrder ?? {}), ...patch } })
+  }
 
-  private shape(t: any, people: Person[], i: number, map: Record<string, string> = {}): Card {
+  private shape(t: any, people: Person[], i: number, map: Record<string, string> = {}, order: Record<string, number> = {}): Card {
     const a = t.assignee ? (people.find((p) => p.id === t.assignee || p.email === t.assignee || p.name === t.assignee) ?? { id: t.assignee, name: t.assignee, email: null, avatar: null, role: 'member' }) : null
     return {
       id: t.id,
@@ -871,7 +882,7 @@ class CloudflareStore implements Store {
       status: STATUSES.includes(t.status) ? t.status : 'todo',
       assignee: a,
       labels: [t.priority].filter((p) => p && p !== 'medium'),
-      position: i,
+      position: order[t.id] ?? i,
       updatedAt: t.updated_at,
       week: this.weekOf(t, map),
       // Cloudflare tasks carry a revision; the client sends it back on save.
@@ -902,20 +913,24 @@ class CloudflareStore implements Store {
     const [rows, people, st] = await Promise.all([this.api.call<any[]>('/tasks'), this.members(), this.raw()])
     const map = st.taskWeeks ?? {}
     return rows
-      .map((t, i) => this.shape(t, people, i, map))
+      .map((t, i) => this.shape(t, people, i, map, st.taskOrder ?? {}))
       .filter((c) => (weeks === 'backlog' ? c.week === null : c.week !== null && weeks.includes(c.week)))
   }
   async moveCards(ids: string[], week: string | null) {
     if (ids.length) await this.placeWeeks(Object.fromEntries(ids.map((id) => [id, week ?? 'backlog'])))
   }
-  async createCard(c: { title: string; status?: Status; week?: WeekRef }) {
-    const t = await this.api.call('/tasks', { method: 'POST', body: { title: c.title, status: c.status ?? 'todo' } })
+  async createCard(c: { title: string; status?: Status; week?: WeekRef; assigneeId?: string | null; position?: number }) {
+    const t = await this.api.call('/tasks', { method: 'POST', body: { title: c.title, status: c.status ?? 'todo', ...(c.assigneeId ? { assignee: c.assigneeId } : {}) } })
     const week = c.week ?? mondayOf(localToday())
-    if (week !== mondayOf(t.created_at)) await this.placeWeeks({ [t.id]: week })
-    return this.shape(t, await this.members(), 0, { [t.id]: week })
+    // A new card goes under the ones already there, like everywhere else.
+    const position = c.position ?? Date.now() / 1e6
+    const cur = await this.raw()
+    await this.writeRaw({ ...cur, ...(week !== mondayOf(t.created_at) ? { taskWeeks: { ...(cur.taskWeeks ?? {}), [t.id]: week } } : {}), taskOrder: { ...(cur.taskOrder ?? {}), [t.id]: position } })
+    return this.shape(t, await this.members(), 0, { [t.id]: week }, { [t.id]: position })
   }
-  async updateCard(id: string, p: Partial<{ title: string; body: string; status: Status; assigneeId: string | null; week: WeekRef }>) {
+  async updateCard(id: string, p: Partial<{ title: string; body: string; status: Status; assigneeId: string | null; position: number; week: WeekRef }>) {
     if (p.week !== undefined) await this.placeWeeks({ [id]: p.week })
+    if (typeof p.position === 'number' && Number.isFinite(p.position)) await this.placeOrder({ [id]: p.position })
     const cur = (await this.api.call<any[]>('/tasks')).find((t) => t.id === id)
     if (!cur) throw new CloudflareError('Card not found.', 404)
     const t = await this.api.call(`/tasks/${id}`, {
@@ -931,7 +946,8 @@ class CloudflareStore implements Store {
         revision: cur.revision,
       },
     })
-    return this.shape(t, await this.members(), 0, (await this.raw()).taskWeeks ?? {})
+    const st = await this.raw()
+    return this.shape(t, await this.members(), 0, st.taskWeeks ?? {}, st.taskOrder ?? {})
   }
   async deleteCard(id: string) {
     await this.api.call(`/tasks/${id}`, { method: 'DELETE' })
@@ -1820,9 +1836,13 @@ export function v2Routes(current: () => { workspace: Workspace; db: unknown } | 
   app.post('/cards', async (c) => {
     const denied = await guardWrite(c, 'card')
     if (denied) return denied
-    const b = await c.req.json<{ title: string; status?: Status; week?: string }>()
+    const b = await c.req.json<{ title: string; status?: Status; week?: string; assigneeId?: string | null; position?: number }>()
     if (!b.title?.trim()) return c.json({ error: 'Give the card a title.' }, 400)
-    const made = await placed(c, 'card', await store().createCard({ title: b.title.trim(), status: STATUSES.includes(b.status!) ? b.status : 'todo', week: weekParam(b.week) }))
+    const made = await placed(
+      c,
+      'card',
+      await store().createCard({ title: b.title.trim(), status: STATUSES.includes(b.status!) ? b.status : 'todo', week: weekParam(b.week), ...(typeof b.assigneeId === 'string' && b.assigneeId ? { assigneeId: b.assigneeId } : {}), ...(typeof b.position === 'number' && Number.isFinite(b.position) ? { position: b.position } : {}) }),
+    )
     learn('card', made.id)
     return c.json(made)
   })

@@ -15,6 +15,14 @@
   import { ui, visibleTabs, go, openPack, packView, refreshWorkspace, refreshing } from './state.svelte'
   import { PACK_TABS } from './packs'
   import Download from '@lucide/svelte/icons/download'
+  import Megaphone from '@lucide/svelte/icons/megaphone'
+  import ChartLine from '@lucide/svelte/icons/chart-line'
+  import Users from '@lucide/svelte/icons/users'
+  import Globe from '@lucide/svelte/icons/globe'
+  import Wallet from '@lucide/svelte/icons/wallet'
+  import MapIcon from '@lucide/svelte/icons/map'
+  import Inbox from '@lucide/svelte/icons/inbox'
+  import { hosted, viewsOf } from './hosted.svelte'
   import RefreshCw from '@lucide/svelte/icons/refresh-cw'
   import { activeWorkspace, workspace } from '../lib/workspace.svelte'
   import { scope } from './project.svelte'
@@ -26,7 +34,9 @@
   const ws = $derived(activeWorkspace())
   let expanded = $state<Record<string, boolean>>({})
   const ICONS: Record<string, any> = { board: Columns3, docs: FileText, canvas: Shapes, meetings: Mic }
-  const iconFor = (type: string) => ICONS[type] ?? PACK_TABS[type]?.icon ?? Package
+  // A tab served from elsewhere names its icon; these are the ones it can name.
+  const NAMED: Record<string, any> = { megaphone: Megaphone, 'chart-line': ChartLine, users: Users, globe: Globe, wallet: Wallet, map: MapIcon, inbox: Inbox }
+  const iconFor = (type: string) => ICONS[type] ?? PACK_TABS[type]?.icon ?? NAMED[hosted.tabs[type]?.icon ?? ''] ?? Package
   /** Fetch what a tab shows while the pointer is still on its way to it. */
   const warm = (type: string) => (TAB_PATHS[type] ?? []).forEach(prefetch)
 </script>
@@ -49,7 +59,7 @@
   <nav>
     {#each visibleTabs() as t (t.id)}
       {@const Icon = iconFor(t.type)}
-      {@const views = PACK_TABS[t.type]?.views ?? []}
+      {@const views = viewsOf(t.type)}
       {#if views.length > 1}
         {@const open = ui.tab === t.id || expanded[t.id]}
         <button class="tab" class:on={ui.tab === t.id && !open} onclick={() => (expanded = { ...expanded, [t.id]: !open })}>
@@ -79,9 +89,8 @@
     <!-- The site is the same workspace with less in it: nothing here records,
          reads in, or talks to an agent. Say so where the tabs end. -->
     <a class="getapp" href="https://github.com/bchong12/alfredo/releases/latest" target="_blank" rel="noopener">
-      <span class="gettop"><Download size={13} /><b>Get the desktop app</b></span>
-      <span class="getwhy">It is the better one: it records and transcribes meetings, answers questions from everything in here, and works with your AI through MCP. This site shows the same workspace without those.</span>
-      <span class="getcta">Download for Mac, Windows or Linux</span>
+      <Download size={14} />
+      <span class="getwhat"><span>Get the desktop app</span><span class="getwhy">Meetings, recording and MCP</span></span>
     </a>
   {/if}
 
@@ -179,36 +188,31 @@
   }
   .getapp {
     display: flex;
-    flex-direction: column;
-    gap: 6px;
-    margin: 0 0 8px;
-    padding: 10px 10px 11px;
-    border: 1px solid var(--line);
-    border-radius: var(--r-lg);
-    background: var(--panel);
-    color: var(--ink-2);
+    align-items: center;
+    gap: 8px;
+    height: 36px;
+    margin: 0 0 4px;
+    padding: 0 8px;
+    border-radius: var(--r-md);
+    color: var(--muted);
     text-decoration: none;
-    font-size: var(--fs-1);
-    line-height: 1.45;
+    font-size: var(--fs-2);
   }
   .getapp:hover {
-    border-color: var(--line-strong);
+    background: var(--raised);
     color: var(--ink);
   }
-  .gettop {
+  .getwhat {
     display: flex;
-    align-items: center;
-    gap: 6px;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
     color: var(--ink);
-    font-size: var(--fs-2);
+    line-height: 1.25;
   }
   .getwhy {
     color: var(--muted);
-  }
-  .getcta {
-    color: var(--ink);
-    text-decoration: underline;
-    text-underline-offset: 2px;
+    font-size: var(--fs-1);
   }
   .switcher:hover,
   .switcher.open,

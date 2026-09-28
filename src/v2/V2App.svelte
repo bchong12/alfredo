@@ -17,6 +17,9 @@
   import CanvasTab from './CanvasTab.svelte'
   import MeetingsTab from './MeetingsTab.svelte'
   import { PACK_TABS } from './packs'
+  import HostedTab from './HostedTab.svelte'
+  import { hosted } from './hosted.svelte'
+  import { embed, embedReady } from './embed.svelte'
   import SignIn from './SignIn.svelte'
   import Welcome from './Welcome.svelte'
   import PageSkeleton from './PageSkeleton.svelte'
@@ -70,7 +73,7 @@
     const who = email
     // untrack: loading reads the state it also writes (settings, projects),
     // and a tracked read there would re-run this effect off its own writes.
-    if (id && ok) untrack(() => (loadWorkspaceState(who), workspace.hosted || (syncRecording(), watchCalls(), listenForUpdates())))
+    if (id && ok) untrack(() => (loadWorkspaceState(who), workspace.hosted || embed.on || (syncRecording(), watchCalls(), listenForUpdates())))
     else if (id && needsLogin) {
       // Nothing of the previous workspace stays on screen while this one asks who you are.
       ui.settings = null
@@ -79,6 +82,16 @@
   })
 
   const tab = $derived(visibleTabs().find((t) => t.id === ui.tab) ?? visibleTabs()[0])
+
+  // Framed by the desktop app: one tab of this site, and nothing around it.
+  const framedTab = $derived(embed.on ? ((ui.settings?.tabs ?? []).find((t) => t.id === embed.tab) ?? (ui.settings?.tabs ?? []).find((t) => t.type === embed.tab) ?? null) : null)
+  const framedView = $derived.by(() => {
+    const views = framedTab ? (PACK_TABS[framedTab.type]?.views ?? []) : []
+    return views.some((v) => v.id === embed.view) ? embed.view : (views[0]?.id ?? '')
+  })
+  $effect(() => {
+    if (embed.on && !needsLogin && ui.settings) embedReady()
+  })
 
   // The shape of the page that is coming, so the wait looks like the thing
   // being waited for. Remembered, because the first frame happens before any
@@ -108,7 +121,10 @@
   // The app refreshes by itself when the window comes back to the front, or
   // after a minute with nothing open; never while something is being edited.
   const quietRefresh = () => {
-    if (ui.item || ui.overlay || document.hidden || Date.now() - refreshing.at < 20_000) return
+    if (embed.on || ui.item || ui.overlay || ui.held || document.hidden || Date.now() - refreshing.at < 20_000) return
+    // Remaking the tab empties whatever is being typed into it.
+    const at = document.activeElement as HTMLElement | null
+    if (at && (at.isContentEditable || ((at.tagName === 'INPUT' || at.tagName === 'TEXTAREA') && (at as HTMLInputElement).value))) return
     void refreshWorkspace()
   }
   $effect(() => {
@@ -124,6 +140,7 @@
   })
 
   function onkey(e: KeyboardEvent) {
+    if (embed.on) return
     const mod = e.metaKey || e.ctrlKey
     if (mod && e.key === 'r') {
       e.preventDefault()
@@ -146,6 +163,24 @@
   <ShellSkeleton />
 {:else if !workspace.list.length && !workspace.hosted}
   <Welcome />
+{:else if embed.on}
+  <div class="shell">
+    <main>
+      {#if needsLogin}
+        <SignIn />
+      {:else if !ui.settings}
+        <PageSkeleton kind="list" />
+      {:else if framedTab && PACK_TABS[framedTab.type]}
+        {@const Pack = PACK_TABS[framedTab.type].component}
+        {#key framedTab.id}<Pack kind={framedTab.type} tabName={framedTab.name} view={framedView} />{/key}
+      {:else}
+        <div class="missing">
+          <b>Nothing to show</b>
+          <span>This site has no “{embed.tab}” tab.</span>
+        </div>
+      {/if}
+    </main>
+  </div>
 {:else}
   <div class="shell">
     <Sidebar onsearch={() => (searching = true)} />
@@ -168,6 +203,9 @@
           {:else if PACK_TABS[tab.type]}
             {@const Pack = PACK_TABS[tab.type].component}
             <Pack kind={tab.type} tabName={tab.name} view={packView(tab.type)} />
+          {:else if hosted.tabs[tab.type]}
+            <!-- Not in this copy, but the workspace says where it is served. -->
+            <HostedTab tabId={tab.id} tabName={tab.name} at={hosted.tabs[tab.type]!} view={packView(tab.type)} />
           {:else}
             <div class="missing">
               <b>{tab.name}</b>

@@ -87,7 +87,7 @@ connecting a database, and never repeat back tokens or keys.`,
 
   add(
     'set_workspace_tabs',
-    'Replace the tabs JSON. Show the user the new list before calling. Every tab needs id, name and type (board, docs, canvas, meetings, or a pack type such as marketing or management); set hidden: true to hide one.',
+    'Replace the tabs JSON. Show the user the new list before calling. Every tab needs id, name and type (board, docs, canvas, meetings, or a pack type such as marketing or management); set hidden: true to hide one. A pack the app does not carry is shown from a site when pack data "<type>.tab" is { site, icon, views: [{ id, label }] }.',
     {
       tabs: z
         .array(

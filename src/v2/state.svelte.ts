@@ -3,6 +3,7 @@ import { v2, type Person, type Settings, type TabDef } from './api'
 import { scope, rememberProject, recallProject, type Project } from './project.svelte'
 import { rememberBrand, rememberFaces, rememberShell, shellOf } from './remembered.svelte'
 import { PACK_TABS } from './packs'
+import { findHosted, recallHosted, viewsOf } from './hosted.svelte'
 import { workspace } from '../lib/workspace.svelte'
 import { warmTabs } from './cache'
 
@@ -12,6 +13,8 @@ export type SettingsPage = 'general' | 'projects' | 'cycles' | 'tabs' | 'members
 export const ui = $state({
   /** Bumped by Refresh (⌘R, or the app on its own): the tab on screen is remade and asks the database again. */
   refreshed: 0,
+  /** Something is being typed or carried: the app does not remake the tab on its own meanwhile. */
+  held: false,
   tab: 'board' as string,
   /** The open doc, canvas or meeting inside the current tab, if any. */
   item: null as string | null,
@@ -27,7 +30,7 @@ export const ui = $state({
 
 /** The page of a pack tab that is open: the last one picked, if the pack still has it. */
 export function packView(type: string) {
-  const views = PACK_TABS[type]?.views ?? []
+  const views = viewsOf(type)
   return views.some((v) => v.id === ui.pack[type]) ? ui.pack[type] : (views[0]?.id ?? '')
 }
 
@@ -133,6 +136,7 @@ export async function loadWorkspaceState(meEmail: string | null) {
   // Draw the workspace as it was last seen, at once. Everything below replaces
   // it with what the database says, usually before anyone has read a word.
   const seen = shellOf(w)
+  recallHosted(w)
   if (seen) {
     ui.settings = seen.settings
     ui.members = seen.members
@@ -159,6 +163,8 @@ export async function loadWorkspaceState(meEmail: string | null) {
     rememberBrand(w, { name: s.name, logo: s.logo })
     rememberFaces(m)
     rememberShell(w, { settings: s, members: m, projects: { enabled: scope.enabled, list: scope.list } })
+    // Tabs this copy does not carry: where the workspace says they are served.
+    void findHosted((s.tabs ?? []).map((t) => t.type))
     // The database's word first (a Worker knows its session; Supabase its
     // login); the email second; the first member only where nobody signs in.
     ui.me = (who && m.find((p) => p.id === who.id)) || (meEmail && m.find((p) => p.email?.toLowerCase() === meEmail.toLowerCase())) || (workspace.list.find((w) => w.id === workspace.activeId)?.kind === 'local' ? m[0] : null) || null
