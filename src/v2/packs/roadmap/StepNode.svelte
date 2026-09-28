@@ -9,22 +9,16 @@
   import type { Standing, Step } from './model'
 
   let { data }: NodeProps = $props()
-  const d = $derived(data as { step: Step; n: number; at: Standing; owners: Person[]; due: string | null; canEdit: boolean; oncycle: (id: string) => void })
+  const d = $derived(data as { step: Step; n: number; at: Standing; owners: Person[]; due: string | null; words: string; h: number; canEdit: boolean; oncycle: (id: string) => void })
   const s = $derived(d.step)
-  const words = $derived(
-    d.at.kind === 'ready' ? 'Ready to start'
-    : d.at.kind === 'doing' ? 'Under way'
-    : d.at.kind === 'done' ? 'Done'
-    : d.at.kind === 'decision' ? `Needs ${d.at.decisions.length === 1 ? 'a decision' : `${d.at.decisions.length} decisions`}`
-    : `After ${d.at.steps.map((x) => x.title).join(', ')}`,
-  )
 </script>
 
 <Handle type="target" position={Position.Left} />
 <Handle type="source" position={Position.Right} />
 <Handle id="top" type="target" position={Position.Top} class="quiet" />
 
-<div class="card {d.at.kind}">
+<!-- As tall as its words need: the map makes the room (see layout in model.ts). -->
+<div class="card {d.at.kind}" style:height="{d.h}px">
   <div class="top">
     <span class="ref">STEP {d.n}</span>
     <span class="grow"></span>
@@ -39,7 +33,7 @@
   </div>
   <span class="title">{s.title}</span>
   <div class="meta">
-    <span class="stand"><i></i>{words}</span>
+    <span class="stand"><i></i><span>{d.words}</span></span>
     <span class="grow"></span>
     {#if d.owners.length}
       <span class="faces">{#each d.owners as p (p.id)}<Face person={p} size={20} dim={s.state === 'done'} />{/each}{#if s.undecided}<span class="q" title="Which of them is not settled yet">?</span>{/if}</span>
@@ -52,7 +46,7 @@
 <style>
   .card {
     width: 264px;
-    height: 104px;
+    min-height: 104px;
     box-sizing: border-box;
     display: flex;
     flex-direction: column;
@@ -81,6 +75,10 @@
     align-items: center;
     gap: 8px;
   }
+  /* Who owns it stays at the foot while what it waits on runs to a second line. */
+  .meta {
+    align-items: flex-end;
+  }
   .grow {
     flex: 1;
   }
@@ -94,26 +92,22 @@
     font-size: 13px;
     font-weight: 500;
     line-height: 18px;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
+    overflow-wrap: anywhere;
   }
   .stand {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 6px;
     min-width: 0;
     font-size: 12px;
+    line-height: 16px;
     color: var(--muted);
-    overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
+    overflow-wrap: anywhere;
   }
   .stand i {
     width: 6px;
     height: 6px;
+    margin-top: 5px;
     flex: none;
     border-radius: 50%;
     background: var(--line-strong);

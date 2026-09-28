@@ -159,11 +159,17 @@ export const GATE_H = 30
 export const GATE_GAP = 10
 
 export type Placed = {
-  steps: { step: Step; x: number; y: number; n: number }[]
+  /** `h`: how tall the card is drawn, which is as tall as its words need. */
+  steps: { step: Step; x: number; y: number; n: number; h: number }[]
   decisions: { decision: Decision; x: number; y: number; loose: boolean }[]
 }
 
-export function layout(road: Roadmap, showSettled = false): Placed {
+/**
+ * `heightOf` says how tall a step's card has to be for its words (the tab
+ * measures them); a row is as tall as its tallest card, so a long title makes
+ * its card taller rather than being cut off, and nothing below is overlapped.
+ */
+export function layout(road: Roadmap, showSettled = false, heightOf: (s: Step) => number = () => CARD_H): Placed {
   const shown = road.decisions.filter((d) => showSettled || !d.answer)
   /* A decision belongs above the first step it holds, in the order steps are read. */
   const order = columns(road).flat().map((s) => s.id)
@@ -183,15 +189,16 @@ export function layout(road: Roadmap, showSettled = false): Placed {
   let bottom = 0
   for (let r = 0; r < Math.max(0, ...cols.map((c) => c.length)); r++) {
     const room = Math.max(0, ...cols.map((c) => (c[r] ? (home.get(c[r].id) ?? []).length : 0))) * (GATE_H + GATE_GAP)
+    const tall = Math.max(CARD_H, ...cols.map((c) => (c[r] ? Math.ceil(heightOf(c[r])) : 0)))
     cols.forEach((col, c) => {
       const step = col[r]
       if (!step) return
       const x = c * (CARD_W + COL_GAP)
       const gates = home.get(step.id) ?? []
       gates.forEach((decision, k) => out.decisions.push({ decision, x, y: y + room - (gates.length - k) * (GATE_H + GATE_GAP), loose: false }))
-      out.steps.push({ step, x, y: y + room, n: number.get(step.id)! })
+      out.steps.push({ step, x, y: y + room, n: number.get(step.id)!, h: Math.max(CARD_H, Math.ceil(heightOf(step))) })
     })
-    y += room + CARD_H + ROW_GAP
+    y += room + tall + ROW_GAP
     bottom = y
   }
   loose.forEach((decision, i) => out.decisions.push({ decision, x: i * (CARD_W + 24), y: bottom + 12, loose: true }))

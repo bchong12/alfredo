@@ -5,6 +5,8 @@
   // and open the way a card opens.
   import { SvelteFlow, Background, BackgroundVariant, MarkerType, type Node, type Edge, type Connection } from '@xyflow/svelte'
   import '@xyflow/svelte/dist/style.css'
+  import ChevronDown from '@lucide/svelte/icons/chevron-down'
+  import ChevronUp from '@lucide/svelte/icons/chevron-up'
   import Plus from '@lucide/svelte/icons/plus'
   import Minus from '@lucide/svelte/icons/minus'
   import X from '@lucide/svelte/icons/x'
@@ -25,6 +27,7 @@
   import { canEditHere, scope } from '../../project.svelte'
   import { peek, load as fetchCached, put } from '../../cache'
   import { EMPTY, layout, newId, standing, summary, tidy, wouldLoop, type Decision, type Roadmap, type Step } from './model'
+  import { cardHeight, forgetMeasures, standingWords } from './measure'
 
   let { tabName }: { kind: string; tabName: string; view: string } = $props()
 
@@ -39,6 +42,23 @@
   let showSettled = $state(false)
   let filled = $state(false)
   let zoom = $state(1)
+  // The summary is one line unless it was opened; remembered on this device.
+  const TODAY = 'alfredo.v2.roadmap.summary'
+  let todayOpen = $state(
+    (() => {
+      try {
+        return localStorage.getItem(TODAY) === 'open'
+      } catch {
+        return false
+      }
+    })(),
+  )
+  function setToday(open: boolean) {
+    todayOpen = open
+    try {
+      localStorage.setItem(TODAY, open ? 'open' : 'small')
+    } catch {}
+  }
   let flow: any = null
   const canEdit = $derived(canEditHere())
 
@@ -92,17 +112,25 @@
 
   let nodes = $state.raw<Node[]>([])
   let edges = $state.raw<Edge[]>([])
+  // A card is as tall as its words; measured again once the app's type has loaded.
+  let typeReady = $state(0)
+  if (typeof document !== 'undefined') document.fonts?.ready.then(() => (forgetMeasures(), typeReady++))
+  const heightOf = (step: Step) => cardHeight(step, standing(road, step), step.owners.length)
   $effect(() => {
-    const placed = layout(road, showSettled)
+    void typeReady
+    const placed = layout(road, showSettled, heightOf)
     const editable = canEdit
     nodes = [
-      ...placed.steps.map(({ step, x, y, n }) => ({
-        id: step.id,
-        type: 'step',
-        position: { x, y },
-        draggable: false,
-        data: { step, n, at: standing(road, step), owners: step.owners.map(who), due: step.due ? dueLabel(step.due) : null, canEdit: editable, oncycle: cycle },
-      })),
+      ...placed.steps.map(({ step, x, y, n, h }) => {
+        const at = standing(road, step)
+        return {
+          id: step.id,
+          type: 'step',
+          position: { x, y },
+          draggable: false,
+          data: { step, n, at, h, words: standingWords(at), owners: step.owners.map(who), due: step.due ? dueLabel(step.due) : null, canEdit: editable, oncycle: cycle },
+        }
+      }),
       ...placed.decisions.map(({ decision, x, y }) => ({
         id: decision.id,
         type: 'decision',
@@ -256,8 +284,18 @@
         <Background variant={BackgroundVariant.Dots} gap={22} size={1} bgColor="var(--panel)" patternColor="var(--line)" />
       </SvelteFlow>
 
-      <!-- The morning's answer, kept out of the way of the map. -->
+      <!-- The morning's answer, kept out of the way of the map: one line until
+           somebody asks for the rest. -->
+      {#if !todayOpen}
+        <button class="today small" title="Show what can start, what is under way and what is waited on" onclick={() => setToday(true)}>
+          <span class="count"><i class="go"></i>{sum.ready.length} can start</span>
+          {#if sum.doing.length}<span class="count">{sum.doing.length} under way</span>{/if}
+          {#if sum.openDecisions.length}<span class="count">{sum.openDecisions.length} decision{sum.openDecisions.length === 1 ? '' : 's'}</span>{/if}
+          <ChevronDown size={13} />
+        </button>
+      {:else}
       <div class="today">
+        <button class="less" title="Make this smaller" aria-label="Make this smaller" onclick={() => setToday(false)}><ChevronUp size={13} /></button>
         <div class="fact">
           <span class="k">Can start</span>
           {#each sum.ready as s (s.id)}
@@ -277,6 +315,7 @@
           </div>
         {/if}
       </div>
+      {/if}
 
       <div class="tools">
         <button class="tool" title="Zoom out" onclick={() => flow?.zoomOut({ duration: 160 })}><Minus size={16} /></button>
@@ -524,6 +563,51 @@
     background: var(--raised);
     border: 1px solid var(--line-strong);
     box-shadow: var(--shadow-md);
+  }
+  .today.small {
+    flex-direction: row;
+    align-items: center;
+    gap: 12px;
+    height: 32px;
+    padding: 0 10px 0 12px;
+    font: inherit;
+    font-size: 12px;
+    color: var(--ink-2);
+    cursor: pointer;
+  }
+  .today.small:hover {
+    color: var(--ink);
+    border-color: var(--muted);
+  }
+  .count {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+  }
+  .less {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 22px;
+    height: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 0;
+    border-radius: 6px;
+    background: none;
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .less:hover {
+    color: var(--ink);
+    background: var(--accent-soft);
+  }
+  /* Room for the button beside the first line. */
+  .today:not(.small) .fact:first-of-type {
+    padding-right: 26px;
   }
   .fact {
     display: flex;
