@@ -8,7 +8,7 @@
    or, for a row made by email before the login existed, the row with this
    login's email. The same match the server makes. */
 create or replace function alfredo_person() returns uuid
-  language sql stable security definer set search_path = public as $$
+  language sql stable security definer set search_path = public, pg_temp as $$
   select id from people
   where active and (user_id = auth.uid() or (user_id is null and lower(email) = lower(auth.jwt() ->> 'email')))
   order by (user_id = auth.uid()) desc nulls last
@@ -16,18 +16,18 @@ create or replace function alfredo_person() returns uuid
 $$;
 
 create or replace function alfredo_member() returns boolean
-  language sql stable security definer set search_path = public as $$
+  language sql stable security definer set search_path = public, pg_temp as $$
   select alfredo_person() is not null;
 $$;
 
 create or replace function alfredo_is_admin() returns boolean
-  language sql stable security definer set search_path = public as $$
+  language sql stable security definer set search_path = public, pg_temp as $$
   select coalesce((select role = 'admin' from people where id = alfredo_person()), false);
 $$;
 
 /** Whether this workspace is split into projects at all. */
 create or replace function alfredo_uses_projects() returns boolean
-  language sql stable security definer set search_path = public as $$
+  language sql stable security definer set search_path = public, pg_temp as $$
   select coalesce((select (value ->> 'enabled')::boolean from workspace_settings where key = 'project_settings'), false);
 $$;
 
@@ -40,7 +40,7 @@ $$;
  * they are a viewer.
  */
 create or replace function alfredo_visible(item_kind text, item text, need_write boolean default false) returns boolean
-  language sql stable security definer set search_path = public as $$
+  language sql stable security definer set search_path = public, pg_temp as $$
   select alfredo_member() and (
     alfredo_is_admin()
     or (
@@ -119,9 +119,31 @@ drop policy if exists transcript_parts_write on transcript_parts;
 create policy transcript_parts_write on transcript_parts for all
   using (alfredo_visible('meeting', meeting_id::text, true)) with check (alfredo_visible('meeting', meeting_id::text, true));
 
--- Your own row: you may set your name, photo and the sign-in behind it.
+-- Self-service changes are profile-only. RLS restricts rows, not columns:
+-- table-wide UPDATE grants must never allow a member to promote themselves,
+-- rebind identity, reactivate access or change any future security field.
+-- Keep this function SECURITY INVOKER: current_user must remain the actual
+-- database caller. Trusted owner/SECURITY DEFINER invite operations and the
+-- service-role backend preserve their existing administration paths.
+create or replace function protect_people_membership() returns trigger
+  language plpgsql security invoker set search_path = public, pg_temp as $$
+begin
+  if current_user in ('authenticated', 'anon') and not alfredo_is_admin()
+     and (to_jsonb(new) - array['name','avatar_url'])
+         is distinct from (to_jsonb(old) - array['name','avatar_url']) then
+    raise exception 'Membership fields require an administrator' using errcode = '42501';
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists people_protect_membership on people;
+create trigger people_protect_membership before update on people
+  for each row execute function protect_people_membership();
+
+-- Inactive accounts cannot use a self-service policy to regain access.
 drop policy if exists people_self on people;
-create policy people_self on people for update using (user_id = auth.uid()) with check (user_id = auth.uid());
+create policy people_self on people for update to authenticated
+  using (active and user_id = auth.uid()) with check (active and user_id = auth.uid());
 
 -- Your own model key, and nobody else's.
 drop policy if exists user_keys_self on user_keys;
@@ -136,7 +158,7 @@ create policy user_keys_self on user_keys for all using (user_id = auth.uid()) w
  * row and the memberships itself. The app sends the hash, never the token.
  */
 create or replace function alfredo_join(token_hash text, display_name text default null) returns json
-  language plpgsql security definer set search_path = public as $$
+  language plpgsql security definer set search_path = public, pg_temp as $$
 declare
   inv        invites%rowtype;
   mail       text := lower(coalesce(auth.jwt() ->> 'email', ''));
@@ -177,5 +199,7 @@ begin
   return json_build_object('id', person.id, 'name', person.name, 'email', person.email, 'role', person.role);
 end $$;
 
-revoke all on function alfredo_join(text, text) from public;
+-- Existing direct/default-role grants survive CREATE OR REPLACE and a PUBLIC
+-- revocation. Invite acceptance is intentionally signed-in only.
+revoke all on function alfredo_join(text, text) from public, anon;
 grant execute on function alfredo_join(text, text) to authenticated;

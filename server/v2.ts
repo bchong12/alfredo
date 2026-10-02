@@ -177,7 +177,10 @@ export interface Store {
   remove(kind: 'docs' | 'canvases' | 'meetings', id: string): Promise<void>
   /** Data a pack keeps in this workspace (a library, a list), or null if it has none. */
   pack(key: string): Promise<{ value: unknown; updatedAt: string } | null>
-  setPack(key: string, value: unknown): Promise<void>
+  /** Replace a pack document. When expectedUpdatedAt is supplied, refuse a
+   * stale replacement instead of silently overwriting a teammate's work.
+   * null means the caller expects the document not to exist yet. */
+  setPack(key: string, value: unknown, expectedUpdatedAt?: string | null): Promise<void>
   packKeys(): Promise<{ key: string; updatedAt: string; bytes: number }[]>
   /** Who the database says is asking, where it keeps its own people. */
   viewer?(): Promise<Viewer | null>
@@ -609,8 +612,23 @@ class SqlStore implements Store {
     const rows = await q<any[]>(db.from('pack_data').select('value, updated_at').eq('key', key).limit(1))
     return rows[0] ? { value: rows[0].value, updatedAt: rows[0].updated_at } : null
   }
-  async setPack(key: string, value: unknown) {
-    await q(db.from('pack_data').upsert({ key, value, updated_at: new Date().toISOString() }))
+  async setPack(key: string, value: unknown, expectedUpdatedAt?: string | null) {
+    const updatedAt = new Date().toISOString()
+    if (expectedUpdatedAt === undefined) {
+      await q(db.from('pack_data').upsert({ key, value, updated_at: updatedAt }))
+      return
+    }
+    if (expectedUpdatedAt === null) {
+      try {
+        await q(db.from('pack_data').insert({ key, value, updated_at: updatedAt }))
+      } catch (e) {
+        if (/duplicate|unique|already exists|23505/i.test((e as Error).message)) throw new Conflict('This pack changed while you were editing it. Reload and try again.')
+        throw e
+      }
+      return
+    }
+    const rows = await q<any[]>(db.from('pack_data').update({ value, updated_at: updatedAt }).eq('key', key).eq('updated_at', expectedUpdatedAt).select('key'))
+    if (!rows.length) throw new Conflict('This pack changed while you were editing it. Reload and try again.')
   }
   async packKeys() {
     const rows = await q<any[]>(db.from('pack_data').select('key, updated_at, value'))
@@ -1071,8 +1089,15 @@ class CloudflareStore implements Store {
     const full = await this.api.call(`/items/${item.id}`)
     return { value: full.content?.pack ?? null, updatedAt: full.updatedAt ?? full.updated_at ?? '' }
   }
-  async setPack(key: string, value: unknown) {
+  async setPack(key: string, value: unknown, expectedUpdatedAt?: string | null) {
     const item = await this.packItem(key)
+    if (expectedUpdatedAt === null && item) throw new Conflict('This pack changed while you were editing it. Reload and try again.')
+    if (expectedUpdatedAt !== undefined && expectedUpdatedAt !== null) {
+      if (!item) throw new Conflict('This pack changed while you were editing it. Reload and try again.')
+      const current = await this.api.call(`/items/${item.id}`)
+      const currentUpdatedAt = current.updatedAt ?? current.updated_at ?? ''
+      if (currentUpdatedAt !== expectedUpdatedAt) throw new Conflict('This pack changed while you were editing it. Reload and try again.')
+    }
     const content = { doc: { type: 'doc', content: [{ type: 'paragraph' }] }, pack: value }
     if (!item) await this.api.call('/items', { method: 'POST', body: { type: 'document', title: PACK_PREFIX + key, content } })
     else {
@@ -1374,6 +1399,25 @@ export function v2Routes(current: () => { workspace: Workspace; db: unknown } | 
     if (!PACK_KEY.test(key)) return c.json({ error: 'Bad pack key.' }, 400)
     await store().setPack(key, await c.req.json())
     return c.json({ ok: true })
+  })
+
+  // Editors of shared pack documents use this form so a stale browser cannot
+  // replace a teammate's newer copy. The ordinary pack routes stay compatible
+  // with existing packs and with the MCP's deliberate whole-document writes.
+  app.get('/pack-documents/:key', async (c) => {
+    const key = c.req.param('key')
+    if (!PACK_KEY.test(key)) return c.json({ error: 'Bad pack key.' }, 400)
+    const p = await store().pack(key)
+    return c.json(p ?? { value: null, updatedAt: null })
+  })
+  app.put('/pack-documents/:key', async (c) => {
+    const key = c.req.param('key')
+    if (!PACK_KEY.test(key)) return c.json({ error: 'Bad pack key.' }, 400)
+    const b = await c.req.json<{ value: unknown; updatedAt: string | null }>()
+    if (!b || !Object.prototype.hasOwnProperty.call(b, 'value') || (b.updatedAt !== null && typeof b.updatedAt !== 'string')) return c.json({ error: 'Pack document writes need value and updatedAt.' }, 400)
+    await store().setPack(key, b.value, b.updatedAt)
+    const saved = await store().pack(key)
+    return c.json(saved)
   })
 
   app.get('/members', async (c) => c.json(await store().members()))

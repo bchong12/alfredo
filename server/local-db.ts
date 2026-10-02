@@ -123,6 +123,7 @@ class Query implements PromiseLike<Result<any>> {
   private filters: Filter[] = []
   private orders: { col: string; asc: boolean }[] = []
   private lim: number | null = null
+  private offset = 0
   private mode: 'many' | 'single' | 'maybe' = 'many'
   private wantCount = false
   private headOnly = false
@@ -162,6 +163,7 @@ class Query implements PromiseLike<Result<any>> {
     this.orders.push({ col, asc: opts?.ascending !== false }); return this
   }
   limit(n: number) { this.lim = n; return this }
+  range(from: number, to: number) { this.offset = from; this.lim = to - from + 1; return this }
   single() { this.mode = 'single'; return this }
   maybeSingle() { this.mode = 'maybe'; return this }
 
@@ -241,7 +243,8 @@ class Query implements PromiseLike<Result<any>> {
         ? ` ORDER BY ${this.orders.map((o) => `"${o.col}" ${o.asc ? 'ASC' : 'DESC'}`).join(', ')}`
         : ''
       const limit = this.lim != null ? ` LIMIT ${Number(this.lim)}` : ''
-      const r = await this.db.pg.query<Row>(`SELECT * FROM ${t}${this.where(params)}${order}${limit}`, params)
+      const offset = this.offset ? ` OFFSET ${Number(this.offset)}` : ''
+      const r = await this.db.pg.query<Row>(`SELECT * FROM ${t}${this.where(params)}${order}${limit}${offset}`, params)
       return r.rows
     }
 

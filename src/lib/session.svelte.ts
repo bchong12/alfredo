@@ -4,6 +4,7 @@
 import { createClient, type SupabaseClient, type Session } from '@supabase/supabase-js'
 import { workspace } from './workspace.svelte'
 import { embed, listenToApp, embedExpired } from '../v2/embed.svelte'
+import { apiFailure } from './api-failure'
 
 /**
  * Empty in development, where Vite proxies /api and /config to the local
@@ -214,7 +215,7 @@ export async function post<T>(path: string, body: unknown, method = 'POST', extr
   }
   if (!r.ok) {
     const detail = await r.json().catch(() => null)
-    throw new Error(detail?.error ?? `${path} failed (${r.status})`)
+    throw apiFailure(r, detail?.error ?? `${path} failed (${r.status})`, detail)
   }
   return r.json() as Promise<T>
 }
@@ -231,6 +232,6 @@ export async function api<T>(path: string, extra: Record<string, string> = {}): 
     expired(auth.session?.access_token ?? null)
     throw new Error('Signed out. Sign in again.')
   }
-  if (!r.ok) throw new Error(`${path} failed (${r.status})`)
+  if (!r.ok) throw apiFailure(r, `${path} failed (${r.status})`)
   return r.json() as Promise<T>
 }
