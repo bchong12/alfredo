@@ -19,9 +19,11 @@ export type Job = {
   error?: string
   startedAt: number
   endedAt?: number
+  /** Started in another workspace: its name, so the recorder can say where. */
+  elsewhere?: string
 }
 
-export const rec = $state<{ jobs: Job[]; title: string; ready: Job | null; call: Call | null; ended: boolean }>({ jobs: [], title: '', ready: null, call: null, ended: false })
+export const rec = $state<{ jobs: Job[]; title: string; ready: Job | null; call: Call | null; ended: boolean; busy: boolean }>({ jobs: [], title: '', ready: null, call: null, ended: false, busy: false })
 
 /** A call the machine can see going on: the app it is in, and when it was first seen. */
 export type Call = { app: string; since: number; known: boolean; event?: CalEvent | null }
@@ -121,9 +123,13 @@ export async function watchCalls() {
       if (id === 'ended' && action !== 'open') void stopRecording()
     })
   }
-  const seen = await v2.get<{ inCall: boolean; app: string | null; known: boolean; event?: CalEvent | null }>('/transcribe/call').catch(() => null)
+  const seen = await v2.get<{ inCall: boolean; app: string | null; known: boolean; event?: CalEvent | null; recording?: boolean }>('/transcribe/call').catch(() => null)
   if (seen) {
-    const recording = recordingNow()
+    // Whether the Mac is recording, whichever workspace it was started from.
+    rec.busy = !!seen.recording
+    // The recording may have been started from another workspace: the Mac's
+    // word counts even when this workspace's list has not caught up.
+    const recording = recordingNow() ?? (rec.busy ? ({ id: '', title: '', state: 'recording', startedAt: 0 } as Job) : null)
     if (seen.inCall) {
       quiet = 0
       rec.ended = false
@@ -160,7 +166,7 @@ export async function watchCalls() {
 /** The offer to record this call: shown until taken or waved away. A call the
  *  machine could not name is only the microphone being open somewhere, which
  *  dictation does too; that one is offered once it has lasted a while. */
-export const offerToRecord = () => !!rec.call && !recordingNow() && rec.call.since !== wavedAway && (rec.call.known || Date.now() - rec.call.since > 90_000)
+export const offerToRecord = () => !!rec.call && !recordingNow() && !rec.busy && rec.call.since !== wavedAway && (rec.call.known || Date.now() - rec.call.since > 90_000)
 export function waveAway() {
   if (rec.call) wavedAway = rec.call.since
 }

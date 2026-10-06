@@ -7,6 +7,7 @@
   import ItemMenu from './ItemMenu.svelte'
   import Cpu from '@lucide/svelte/icons/cpu'
   import Calendar from '@lucide/svelte/icons/calendar'
+  import RefreshCw from '@lucide/svelte/icons/refresh-cw'
   import Plus from '@lucide/svelte/icons/plus'
   import Trash2 from '@lucide/svelte/icons/trash-2'
   import Header from './Header.svelte'
@@ -30,7 +31,7 @@
   type Hears = { can: boolean; both: boolean; why: string; fix?: 'screen' }
   type Onnx = { state: 'idle' | 'downloading' | 'ready' | 'failed'; got: number; of: number; error?: string }
   let engine = $state<{ parakeet: boolean; recording: boolean; install: Install; canRecord?: boolean; localTranscription?: boolean; engine?: string | null; onnx?: Onnx; hears?: Hears } | null>(null)
-  type Upcoming = { connected: boolean; accounts?: number; calendars?: string[]; checking?: boolean; events: Event[] }
+  type Upcoming = { connected: boolean; accounts?: number; calendars?: string[]; checking?: boolean; at?: number; events: Event[] }
   // What was there last time, at once; the calendars are asked again behind it.
   let upcoming = $state<Upcoming | null>(peek<Upcoming>('/calendar/upcoming') ?? null)
   // What is being recorded or written up lives in the app's frame, not here:
@@ -81,16 +82,26 @@
       ui.error = (e as Error).message
     }
   }
-  async function loadUpcoming(again = 0) {
+  let checkingCalendar = $state(false)
+  /** `force`: the person asked; the calendar is looked at again now, not from memory. */
+  async function loadUpcoming(again = 0, force = false) {
     try {
-      upcoming = await fetchCached<Upcoming>('/calendar/upcoming')
+      checkingCalendar = true
+      if (force) {
+        upcoming = await v2.get<Upcoming>('/calendar/upcoming?refresh=1')
+        put('/calendar/upcoming', upcoming)
+      } else upcoming = await fetchCached<Upcoming>('/calendar/upcoming')
       // The server answers with what it had and looks again: ask once more for that.
       if (upcoming.checking && again < 3) setTimeout(() => loadUpcoming(again + 1), 5000)
+      else checkingCalendar = false
     } catch {
       upcoming ??= { connected: false, events: [] }
+      checkingCalendar = false
     }
   }
   if (onAMachine) loadUpcoming()
+  /** "as of 2:40 PM": when the calendar was last actually looked at. */
+  const asOf = $derived(upcoming?.at ? new Date(upcoming.at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : '')
 
   $effect(() => {
     const t = setInterval(() => (now = Date.now()), 1000)
@@ -264,30 +275,32 @@
       </article>
     </div>
   </div>
-{:else if job}
-  <div class="page">
-    <Header crumbs={[{ label: tabName, onclick: () => go(tabId) }, rec.title || 'New meeting']}>
-      <span class="state"><Cpu size={12} /> Parakeet · on this Mac</span>
-    </Header>
-    <div class="live">
-      <div class="rec"><i></i><span>Listening</span><b>{clock(now - job.startedAt)}</b></div>
-      <input class="mtitle big" placeholder="Name this meeting" bind:value={rec.title} />
-      <p class="note">
-        Recording {engine?.hears?.why ?? 'this machine'}. Carry on with anything else in Alfredo: the recorder stays at the bottom of the window,
-        and when you stop, the transcript and notes are written in the background and the meeting turns up here. The audio is deleted right after.
-      </p>
-    </div>
-  </div>
 {:else}
   <div class="page">
     <Header crumbs={[tabName]}>
       {#if canEditHere()}
         <button class="ghost" onclick={create}><Plus size={12} /><span>New meeting</span></button>
-        {#if onAMachine}<button class="primary" disabled={engine?.canRecord === false || (engine?.parakeet === false && !engine?.engine)} title={engine?.canRecord === false ? 'Recording needs a Mac' : ''} onclick={() => start()}><i class="dot"></i><span>Transcribe</span></button>{/if}
+        {#if onAMachine && !job}<button class="primary" disabled={engine?.canRecord === false || (engine?.parakeet === false && !engine?.engine)} title={engine?.canRecord === false ? 'Recording needs a Mac' : ''} onclick={() => start()}><i class="dot"></i><span>Transcribe</span></button>{/if}
       {/if}
     </Header>
     <div class="scroll">
       <div class="home">
+        {#if job}
+          <!-- The recording, at the top of the list rather than in place of it:
+               the calendar and the other meetings stay a click away. -->
+          <section class="livebar">
+            <div class="rec"><i></i><span>Listening</span><b>{clock(now - job.startedAt)}</b></div>
+            {#if job.elsewhere}
+              <span class="elsewhere">{rec.title || job.title || 'Meeting'} · started in {job.elsewhere}</span>
+            {:else}
+              <input class="mtitle" placeholder="Name this meeting" bind:value={rec.title} />
+            {/if}
+            <button class="stop" onclick={stop}><i></i>Stop</button>
+            <p class="note">
+              Recording {engine?.hears?.why ?? 'this machine'}. When you stop, the transcript and notes are written in the background and the meeting turns up below. The audio is deleted right after.
+            </p>
+          </section>
+        {/if}
         {#if engine && engine.canRecord !== false && engine.hears && !engine.hears.both}
           <div class="model quiet">
             <div class="mi"><Cpu size={17} /></div>
@@ -341,6 +354,12 @@
             <button class="src" title="Choose which calendars this workspace uses" onclick={() => openSettings('connections')}>
               <Calendar size={12} />{upcoming?.calendars?.length ? upcoming.calendars.join(' · ') : 'Google Calendar'}
             </button>
+            {#if upcoming?.connected}
+              <!-- When the calendar was last really looked at, and a way to look now. -->
+              <button class="src" class:busy={checkingCalendar} title="Look at the calendar again" onclick={() => loadUpcoming(0, true)}>
+                <RefreshCw size={12} />{checkingCalendar ? 'Checking…' : asOf ? `as of ${asOf}` : 'Refresh'}
+              </button>
+            {/if}
           </div>
           {#if upcoming === null}
             <p class="empty">Checking your calendar…</p>
@@ -358,7 +377,7 @@
                 <!-- Whose calendar, once there is more than one it could be. -->
                 <div class="et"><span class="h">{ev.title}</span><span class="s">{when(ev.start)}{ev.people ? ` · ${ev.people} people` : ''}{(upcoming.accounts ?? 0) > 1 && ev.calendar ? ` · ${ev.calendar}` : ''}</span></div>
                 <span class="soon">{until(ev.start)}</span>
-                <button class="primary sm" disabled={engine?.canRecord === false || (engine?.parakeet === false && !engine?.engine)} onclick={() => start(ev.title)}><i class="dot"></i>Transcribe</button>
+                <button class="primary sm" disabled={!!job || engine?.canRecord === false || (engine?.parakeet === false && !engine?.engine)} title={job ? 'Already recording' : ''} onclick={() => start(ev.title)}><i class="dot"></i>Transcribe</button>
               </div>
             {/each}
           {/if}
@@ -681,6 +700,51 @@
     gap: 20px;
     position: relative;
     box-sizing: border-box;
+  }
+  .livebar {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: center;
+    gap: 10px 16px;
+    padding: 14px 16px;
+    border-radius: var(--r-lg);
+    border: 1px solid var(--line-strong);
+    background: var(--raised);
+  }
+  .livebar .note {
+    grid-column: 1 / -1;
+    font-size: 12px;
+  }
+  .livebar .mtitle {
+    font-size: 15px;
+    padding: 4px 0;
+  }
+  .elsewhere {
+    font-size: 13px;
+    color: var(--ink-2);
+  }
+  .livebar .stop {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    height: 30px;
+    padding: 0 12px;
+    border-radius: var(--r-md);
+    border: 1px solid var(--line-strong);
+    background: var(--bg);
+    color: var(--ink);
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .livebar .stop i {
+    width: 9px;
+    height: 9px;
+    border-radius: 2px;
+    background: #e5484d;
+  }
+  .src.busy {
+    opacity: 0.6;
   }
   .rec {
     display: flex;

@@ -24,7 +24,7 @@ import { summarize, hasLocalChat, teamContext, type Summary } from './ai'
 import { parakeetAvailable } from './parakeet'
 import { download as onnxDownload, downloadState as onnxState, downloaded as onnxReady } from './parakeet-onnx'
 import { runComposio, whoIs } from './composio'
-import { accountsFor, supabaseFor } from './workspaces'
+import { accountsFor, supabaseFor, get as workspaceById } from './workspaces'
 import { CloudflareWorkspace } from './cloudflare-workspace'
 import type { Hit, Store } from './v2'
 import type { Machine, MachineRoutes } from './v2-machine'
@@ -255,12 +255,15 @@ function routes(app: Hono, { store, current, mine, projectOf, mapOf, NO_PROJECT 
   app.get('/transcribe/call', async (c) => {
     const p = await audio.probe().catch(() => null)
     const event = eventNow(current()?.workspace.id ?? '')
-    if (!p) return c.json({ inCall: false, app: null, screen: false, known: false, event })
+    // Whether this Mac is recording right now, whichever workspace it is for:
+    // a call seen while that is so is the one being recorded, not a new offer.
+    const recording = audio.isRecording()
+    if (!p) return c.json({ inCall: false, app: null, screen: false, known: false, event, recording })
     const named = p.calls[0]?.app ?? null
     // A calendar event with a call link, happening now, counts as a call too:
     // the app itself may not have a window the machine can name.
-    const inCall = !!named || (p.micInUse && !audio.isRecording()) || (!!event?.link && p.micInUse)
-    return c.json({ inCall, app: named ?? (inCall ? 'A call' : null), screen: p.screen, known: !!named || (!!event && inCall), event })
+    const inCall = !!named || (p.micInUse && !recording) || (!!event?.link && p.micInUse)
+    return c.json({ inCall, app: named ?? (inCall ? 'A call' : null), screen: p.screen, known: !!named || (!!event && inCall), event, recording })
   })
   /** The calendar event going on right now in this workspace, from what the
    *  calendar last said (a few minutes either side, since people are late). */
@@ -349,9 +352,11 @@ function routes(app: Hono, { store, current, mine, projectOf, mapOf, NO_PROJECT 
     const now = Date.now()
     return c.json(
       [...jobs.values()]
-        .filter((j) => !j.workspace || j.workspace === here)
+        // A recording is the Mac's, not a workspace's: it is shown wherever you
+        // are, named for where it was started, so it can be stopped from there.
+        .filter((j) => !j.workspace || j.workspace === here || j.state === 'recording')
         .filter((j) => j.state !== 'done' || now - (j.endedAt ?? now) < 60_000)
-        .map(({ project: _p, workspace: _w, ...j }) => j),
+        .map(({ project: _p, workspace, ...j }) => ({ ...j, ...(workspace && workspace !== here ? { elsewhere: workspaceById(workspace)?.name ?? workspace } : {}) })),
     )
   })
   app.delete('/transcribe/:id', (c) => {
@@ -375,11 +380,13 @@ function routes(app: Hono, { store, current, mine, projectOf, mapOf, NO_PROJECT 
        "Checking your calendar" for that every time it is opened: what was
        found last is handed over at once, and looked at again behind it. */
     const kept = calendars.get(key)
-    const fresh = kept && Date.now() - kept.at < CALENDAR_FRESH_MS
+    // ?refresh=1 is the person asking: look again now, whatever the age.
+    const fresh = kept && c.req.query('refresh') !== '1' && Date.now() - kept.at < CALENDAR_FRESH_MS
     if (!fresh) void lookAgain(key, aliases)
-    if (kept) return c.json({ ...kept.answer, checking: !fresh })
+    if (kept) return c.json({ ...kept.answer, at: kept.at, checking: !fresh })
     await looking.get(key)
-    return c.json(calendars.get(key)?.answer ?? { connected: false, events: [], calendars: [], error: 'Calendar unavailable' })
+    const found = calendars.get(key)
+    return c.json(found ? { ...found.answer, at: found.at } : { connected: false, events: [], calendars: [], error: 'Calendar unavailable' })
   })
 
   app.get('/asset', async (c) => {

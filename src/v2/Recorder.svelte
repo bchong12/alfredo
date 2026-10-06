@@ -43,7 +43,7 @@
   <div class="pill">
     <button class="what" onclick={() => meetingsTab() && go(meetingsTab()!)} title="Go to the meeting">
       <span class="wave">{#each Array(12) as _, i}<i style:height="{5 + ((i * 7 + Math.floor(now / 300)) % 16)}px"></i>{/each}</span>
-      <span class="name">{rec.title || job.title || 'Meeting'}</span>
+      <span class="name">{rec.title || job.title || 'Meeting'}{#if job.elsewhere}<span class="where">in {job.elsewhere}</span>{/if}</span>
       <span class="t">{clock(now - job.startedAt)}</span>
     </button>
     <button class="stop" onclick={stopRecording}><i></i>Stop</button>
@@ -114,6 +114,10 @@
     border-radius: 2px;
     background: var(--ink-2);
     transition: height 0.3s;
+  }
+  .where {
+    margin-left: 5px;
+    color: var(--muted);
   }
   .name {
     min-width: 0;
